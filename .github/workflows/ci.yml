@@ -1,5 +1,14 @@
-# CI: линтер и тесты на Linux и Windows (ТЗ 9.2, ADR-5, ADR-6).
-# Секреты не нужны. Тесты с PostgreSQL/Redis (маркеры db, scaled) — только на Linux.
+# CI: линтер и тесты backend и frontend на Linux и Windows (ТЗ 9.2, раздел 8, NFR-8;
+# arch: ADR-4, ADR-5, ADR-6, spec AC-8).
+#
+# - Секреты не нужны и не используются; токен — только на чтение (permissions ниже).
+# - Матрица ubuntu-latest + windows-latest с fail-fast: false: упавшая ОС не отменяет
+#   другую, но любой упавший шаг на любой ОС делает проверку красной.
+# - Тесты с PostgreSQL/Redis (маркеры db, scaled) — только в Linux-джобе backend-services:
+#   сервис-контейнеры GitHub Actions работают только на Linux (ADR-5).
+# - Во всех джобах shell — bash (на windows-latest это Git Bash): один синтаксис шагов
+#   на обеих ОС, без расхождений между bash и PowerShell.
+# - Версии actions закреплены мажорными тегами.
 name: CI
 
 on:
@@ -7,12 +16,18 @@ on:
     branches: [main]
   pull_request:
 
+# Новый пуш в ту же ветку PR отменяет устаревший прогон; прогоны main не отменяются,
+# чтобы у каждого коммита main был свой результат.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
+
+env:
+  # uv не обновляет uv.lock ни в одной команде: рассинхрон pyproject.toml и uv.lock — ошибка.
+  UV_FROZEN: "1"
 
 jobs:
   backend:
@@ -22,60 +37,106 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     defaults:
       run:
+        shell: bash
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - name: Получить код
+        uses: actions/checkout@v7
         with:
+          persist-credentials: false
+
+      - name: Установить uv и Python 3.12 (с кэшем)
+        uses: astral-sh/setup-uv@v10
+        with:
+          python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
-      - name: Install Python 3.12 and dependencies
-        run: uv sync --frozen --extra scaled --python 3.12
-      - name: Ruff lint
-        run: uv run ruff check .
-      - name: Ruff format
+
+      - name: Установить зависимости (uv.lock, extra scaled)
+        run: uv sync --frozen --extra scaled
+
+      - name: Проверить версию Python
+        run: uv run python -c "import sys; assert sys.version_info[:2] == (3, 12), sys.version; print(sys.version)"
+
+      - name: Линтер ruff check
+        run: uv run ruff check --output-format=github .
+
+      - name: Форматирование ruff format --check
         run: uv run ruff format --check .
-      - name: Pytest (unit, no external services)
+
+      # Unit-тесты без внешних сервисов. Маркеры db/scaled объявлены в pyproject.toml,
+      # поэтому --strict-markers из addopts не мешает фильтру -m.
+      - name: Тесты pytest (без PostgreSQL и Redis)
         run: uv run pytest -q -m "not db and not scaled"
 
   backend-services:
     name: backend (postgres + redis)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16
         env:
+          # Учётные данные одноразовой БД сервис-контейнера CI, не секрет.
           POSTGRES_USER: ci
           POSTGRES_PASSWORD: ci
           POSTGRES_DB: ci
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U ci" --health-interval 5s --health-timeout 5s --health-retries 10
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
       redis:
         image: redis:7-alpine
         ports: ["6379:6379"]
         options: >-
-          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
-      # localhost — адрес сервис-контейнеров раннера GitHub Actions, не сети заведения.
+      # localhost — адрес сервис-контейнеров на раннере GitHub Actions, не сеть заведения.
       DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci
       REDIS_URL: redis://localhost:6379/0
     defaults:
       run:
+        shell: bash
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - name: Получить код
+        uses: actions/checkout@v7
         with:
+          persist-credentials: false
+
+      - name: Установить uv и Python 3.12 (с кэшем)
+        uses: astral-sh/setup-uv@v10
+        with:
+          python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
-      - run: uv sync --frozen --extra scaled --python 3.12
-      # Код 5 = «тесты не найдены» (до #7/#20 набор может быть пуст) — не считается ошибкой.
-      - name: Pytest (db, scaled)
-        shell: bash
-        run: uv run pytest -q -m "db or scaled" || [ $? -eq 5 ]
+
+      - name: Установить зависимости (uv.lock, extra scaled)
+        run: uv sync --frozen --extra scaled
+
+      # До #7 (БД) и интеграционных тестов scaled набор пуст: pytest завершается с кодом 5
+      # («тесты не выбраны»). Только этот код считается успехом, и он виден как notice;
+      # любые другие ненулевые коды (1 — упавшие тесты, 2 — ошибка сбора, 3 — внутренняя
+      # ошибка, 4 — ошибка аргументов) проходят как есть и делают проверку красной.
+      - name: Тесты pytest с PostgreSQL и Redis (маркеры db, scaled)
+        run: |
+          set +e
+          uv run pytest -q -m "db or scaled"
+          code=$?
+          set -e
+          if [ "$code" -eq 5 ]; then
+            echo "::notice title=pytest db/scaled::Тестов с маркерами db/scaled пока нет (код 5) — шаг пропущен"
+            exit 0
+          fi
+          exit "$code"
 
   frontend:
     name: frontend (${{ matrix.os }})
@@ -84,18 +145,36 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     defaults:
       run:
+        shell: bash
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Получить код
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Node LTS 22 — минимальная версия из engines в frontend/package.json.
+      - name: Установить Node.js 22 (с кэшем npm)
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run test -- --run
-      - run: npm run build
+
+      - name: Установить зависимости (npm ci)
+        run: npm ci
+
+      - name: Линтер (npm run lint)
+        run: npm run lint
+
+      - name: Проверка типов (npm run typecheck)
+        run: npm run typecheck
+
+      - name: Тесты (npm run test -- --run)
+        run: npm run test -- --run
+
+      - name: Сборка (npm run build)
+        run: npm run build

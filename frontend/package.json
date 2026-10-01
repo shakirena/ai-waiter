@@ -12,7 +12,8 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "typecheck": "tsc -b --noEmit",
-    "test": "vitest"
+    "test": "vitest",
+    "icons": "node scripts/generate-icons.mjs"
   },
   "dependencies": {
     "react": "^19.1.0",

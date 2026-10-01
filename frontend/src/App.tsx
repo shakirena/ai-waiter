@@ -1,29 +1,35 @@
+import { lazy, Suspense } from "react";
 import { Route, Routes } from "react-router-dom";
 
-// Заглушки маршрутов трёх интерфейсов (ТЗ 8). Экраны появятся в #13, #21, #27–#29.
-export function GuestPlaceholder() {
-  return <main className="p-4">Гость</main>;
-}
+import NotFoundPage from "./pages/NotFoundPage";
 
-export function StaffPlaceholder() {
-  return <main className="p-4">Официант</main>;
-}
+// Три интерфейса одного приложения (ТЗ 8). Каждый загружается отдельным чанком,
+// чтобы гость не скачивал код панели официанта и админки.
+const GuestPage = lazy(() => import("./pages/GuestPage"));
+const StaffPage = lazy(() => import("./pages/StaffPage"));
+const AdminPage = lazy(() => import("./pages/AdminPage"));
 
-export function AdminPlaceholder() {
-  return <main className="p-4">Админка</main>;
-}
-
-export function NotFound() {
-  return <main className="p-4">Страница не найдена</main>;
+function PageLoading() {
+  return (
+    <div
+      data-testid="page-loading"
+      role="status"
+      className="flex min-h-dvh items-center justify-center px-4 text-gray-500"
+    >
+      Загрузка…
+    </div>
+  );
 }
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/t/:token/*" element={<GuestPlaceholder />} />
-      <Route path="/staff/*" element={<StaffPlaceholder />} />
-      <Route path="/admin/*" element={<AdminPlaceholder />} />
-      <Route path="*" element={<NotFound />} />
-    </Routes>
+    <Suspense fallback={<PageLoading />}>
+      <Routes>
+        <Route path="/t/:token/*" element={<GuestPage />} />
+        <Route path="/staff/*" element={<StaffPage />} />
+        <Route path="/admin/*" element={<AdminPage />} />
+        <Route path="*" element={<NotFoundPage />} />
+      </Routes>
+    </Suspense>
   );
 }

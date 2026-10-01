@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from app import __version__
 from app.api import health
 from app.core.config import Settings, get_settings
+from app.core.container import build_container, start_container, stop_container
 from app.core.log import configure_logging
 from app.core.scheduler import TaskRegistry
 from app.web.spa import mount_spa
@@ -64,11 +65,18 @@ def create_app(settings: Settings | None = None, *, registry: TaskRegistry | Non
 
 
 def _lifespan(settings: Settings, registry: TaskRegistry) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
-    """Фабрика lifespan. В каркасе #37 — только журнал старта и остановки; сборка и запуск
-    Container (EventBus/TaskScheduler/RateLimiter по ``APP_MODE``) добавляются в #38."""
+    """Фабрика lifespan: ``build_container`` → ``start_container`` → ``app.state.container`` →
+    работа → ``stop_container``.
+
+    Неизвестный режим — ``ConfigError`` из ``build_container``: приложение не стартует.
+    Недоступность Redis при старте процесс не роняет (``start_container`` логирует ошибку),
+    о ней сообщает ``/health/ready``."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        container = build_container(settings, registry)
+        await start_container(container)
+        app.state.container = container
         logger.info(
             "Приложение запущено",
             extra={
@@ -81,6 +89,7 @@ def _lifespan(settings: Settings, registry: TaskRegistry) -> Callable[[FastAPI],
         try:
             yield
         finally:
+            await stop_container(container)
             logger.info("Приложение остановлено", extra={"mode": settings.app_mode.value})
 
     return lifespan

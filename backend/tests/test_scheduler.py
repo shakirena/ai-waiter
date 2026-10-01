@@ -126,6 +126,26 @@ async def test_payload_is_copied_at_enqueue(scheduler: InProcessTaskScheduler, r
     assert recorder.calls[0][1] == {"items": [1, 2]}
 
 
+async def test_failed_add_job_does_not_leave_job_id_pending(
+    scheduler: InProcessTaskScheduler, recorder: Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Если APScheduler отверг задачу, job_id не должен навсегда считаться поставленным."""
+    inner = scheduler._scheduler
+    assert inner is not None
+    original = inner.add_job
+
+    def broken(*args: Any, **kwargs: Any) -> Any:
+        raise OverflowError("слишком большая задержка")
+
+    monkeypatch.setattr(inner, "add_job", broken)
+    with pytest.raises(OverflowError):
+        await scheduler.enqueue("demo", {"n": 1}, job_id="retry:1")
+    monkeypatch.setattr(inner, "add_job", original)
+    await scheduler.enqueue("demo", {"n": 2}, job_id="retry:1")
+    await asyncio.wait_for(recorder.called.wait(), timeout=2)
+    assert [p for _, p in recorder.calls] == [{"n": 2}]
+
+
 async def test_job_id_deduplicates_pending_task(scheduler: InProcessTaskScheduler, recorder: Recorder) -> None:
     first = await scheduler.enqueue("demo", {"n": 1}, delay=SHORT, job_id="escalate:7")
     second = await scheduler.enqueue("demo", {"n": 2}, delay=SHORT, job_id="escalate:7")

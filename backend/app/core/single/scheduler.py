@@ -130,13 +130,18 @@ class InProcessTaskScheduler(TaskScheduler):
         payload_copy = json.loads(json.dumps(payload))
         run_date = datetime.now(UTC) + (delay or timedelta(0))
         self._pending.add(job_id)
-        scheduler.add_job(
-            self._launch_one_off,
-            trigger=DateTrigger(run_date=run_date, timezone=UTC),
-            args=[job_id, name, payload_copy],
-            id=_ONE_OFF_PREFIX + job_id,
-            name=name,
-        )
+        try:
+            scheduler.add_job(
+                self._launch_one_off,
+                trigger=DateTrigger(run_date=run_date, timezone=UTC),
+                args=[job_id, name, payload_copy],
+                id=_ONE_OFF_PREFIX + job_id,
+                name=name,
+            )
+        except BaseException:
+            # Откат: иначе повторный enqueue с тем же job_id молча считался бы уже поставленным.
+            self._pending.discard(job_id)
+            raise
         return job_id
 
     async def cancel(self, job_id: str) -> bool:

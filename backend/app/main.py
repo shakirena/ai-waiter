@@ -7,15 +7,21 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator, Callable
-from typing import Any
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 
 from app import __version__
+from app.api import health
 from app.core.config import Settings, get_settings
+from app.core.log import configure_logging
 from app.core.scheduler import TaskRegistry
+from app.web.spa import mount_spa
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(settings: Settings | None = None, *, registry: TaskRegistry | None = None) -> FastAPI:
@@ -29,19 +35,53 @@ def create_app(settings: Settings | None = None, *, registry: TaskRegistry | Non
     5. ``registry`` по умолчанию — ``app.tasks.registry``.
     """
     settings = settings or get_settings()
-    raise NotImplementedError(f"create_app(mode={settings.app_mode})")
+    configure_logging(settings)
+
+    if registry is None:
+        from app.tasks import registry as default_registry
+
+        registry = default_registry
+
+    docs_enabled = settings.is_docs_enabled
+    app = FastAPI(
+        title="AI Waiter",
+        version=__version__,
+        lifespan=_lifespan(settings, registry),
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
+    )
+    # Доступны и до старта lifespan: зависимости эндпоинтов читают их из request.app.state.
+    app.state.settings = settings
+    app.state.task_registry = registry
+
+    app.include_router(health.router)
+
+    if settings.serve_frontend:
+        mount_spa(app, settings.frontend_dist_path)
+
+    return app
 
 
-def _lifespan(
-    settings: Settings, registry: TaskRegistry
-) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
-    """Фабрика lifespan: build_container → start_container → app.state.container → yield → stop_container.
-    Недоступность БД/Redis на старте не роняет процесс — это видно в /health/ready."""
+def _lifespan(settings: Settings, registry: TaskRegistry) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
+    """Фабрика lifespan. В каркасе #37 — только журнал старта и остановки; сборка и запуск
+    Container (EventBus/TaskScheduler/RateLimiter по ``APP_MODE``) добавляются в #38."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        raise NotImplementedError
-        yield
+        logger.info(
+            "Приложение запущено",
+            extra={
+                "mode": settings.app_mode.value,
+                "env": settings.app_env.value,
+                "version": __version__,
+                "tasks": len(registry.handlers),
+            },
+        )
+        try:
+            yield
+        finally:
+            logger.info("Приложение остановлено", extra={"mode": settings.app_mode.value})
 
     return lifespan
 
@@ -49,7 +89,11 @@ def _lifespan(
 def __getattr__(name: str) -> Any:
     """``uvicorn app.main:app``: при первом обращении к ``app`` собрать приложение из env
     и закэшировать в ``globals()``; прочие имена — AttributeError."""
-    raise NotImplementedError
+    if name == "app":
+        application = create_app()
+        globals()["app"] = application
+        return application
+    raise AttributeError(f"модуль {__name__!r} не содержит атрибута {name!r}")
 
 
 __all__ = ["__version__", "create_app"]

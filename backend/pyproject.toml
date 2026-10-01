@@ -41,7 +41,7 @@ packages = ["app"]
 [tool.ruff]
 target-version = "py312"
 line-length = 120
-src = ["app", "tests"]
+src = ["."]  # корень пакетов: app и tests — first-party для isort
 
 [tool.ruff.lint]
 select = [

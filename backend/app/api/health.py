@@ -1,19 +1,17 @@
-"""/health (liveness) и /health/ready (readiness). Без авторизации, без внутренних деталей."""
+"""/health (liveness). Без авторизации, без внутренних деталей.
+
+Readiness (``/health/ready``: проверки Redis, затем БД) подключается вместе с Container в #38.
+"""
 
 from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
-from app.api.deps import get_container
-from app.core.config import AppMode
-from app.core.container import Container
-
-CheckStatus = Literal["ok", "fail", "skipped"]
-
-CHECK_TIMEOUT_SECONDS = 2.0
+from app import __version__
+from app.core.config import AppMode, Settings
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -24,26 +22,13 @@ class HealthResponse(BaseModel):
     version: str
 
 
-class ReadinessResponse(BaseModel):
-    status: Literal["ready", "not_ready"]
-    checks: dict[str, CheckStatus]  # каркас: "redis"; #7 добавляет "database"
+def _app_settings(request: Request) -> Settings:
+    """Настройки, с которыми собрано приложение (``create_app`` кладёт их в ``app.state.settings``)."""
+    settings: Settings = request.app.state.settings
+    return settings
 
 
 @router.get("", response_model=HealthResponse)
-async def health(container: Annotated[Container, Depends(get_container)]) -> HealthResponse:
+async def health(settings: Annotated[Settings, Depends(_app_settings)]) -> HealthResponse:
     """Liveness: не обращается к внешним сервисам. 200, пока жив event loop."""
-    raise NotImplementedError
-
-
-@router.get(
-    "/ready",
-    response_model=ReadinessResponse,
-    responses={503: {"model": ReadinessResponse}},
-)
-async def ready(
-    response: Response, container: Annotated[Container, Depends(get_container)]
-) -> ReadinessResponse:
-    """redis: в scaled — ``event_bus.ping()`` и ``rate_limiter.ping()`` с таймаутом
-    CHECK_TIMEOUT_SECONDS; в single — "skipped". database — добавляется в #7 (``SELECT 1``).
-    Любой "fail" → 503 и status="not_ready". Тексты исключений только в лог."""
-    raise NotImplementedError
+    return HealthResponse(status="ok", mode=settings.app_mode, version=__version__)

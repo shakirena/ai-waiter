@@ -255,3 +255,17 @@ async def test_fake_limiter_uses_shared_validation() -> None:
     assert result.allowed and result.remaining == 2 and result.retry_after == 0.0
     with pytest.raises(ValueError):
         await limiter.hit("k", limit=0, window=timedelta(seconds=10))
+
+
+def test_payload_rejects_too_deep_nesting() -> None:
+    """Глубокая вложенность даёт TypeError, а не RecursionError (security-review #38)."""
+    deep: dict[str, Any] = {}
+    for _ in range(5000):
+        deep = {"a": deep}
+    with pytest.raises(TypeError, match="вложен"):
+        ensure_json_object(deep)
+
+
+def test_payload_rejects_oversized() -> None:
+    with pytest.raises(TypeError, match="превышает"):
+        ensure_json_object({"blob": "x" * 2_000_000})

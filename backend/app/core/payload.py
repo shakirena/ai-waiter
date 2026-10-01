@@ -9,6 +9,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
+# Предел размера сериализованного payload (байты): защита от раздувания памяти и канала Redis.
+MAX_PAYLOAD_BYTES = 1_048_576
+
 
 def ensure_json_object(value: Any, *, what: str = "payload") -> dict[str, Any]:
     """Вернуть ``value``, если это ``dict`` со строковыми ключами, сериализуемый в строгий JSON.
@@ -19,10 +22,15 @@ def ensure_json_object(value: Any, *, what: str = "payload") -> dict[str, Any]:
     if not isinstance(value, dict):
         raise TypeError(f"{what} должен быть словарём (dict), получен {type(value).__name__}")
     try:
-        json.dumps(value, allow_nan=False)
+        serialized = json.dumps(value, allow_nan=False)
+        only_str_keys = _has_only_str_keys(value)
+    except RecursionError:
+        raise TypeError(f"{what} слишком глубоко вложен") from None
     except (TypeError, ValueError) as exc:
         raise TypeError(f"{what} не сериализуется в JSON: {exc}") from None
-    if not _has_only_str_keys(value):
+    if len(serialized.encode("utf-8")) > MAX_PAYLOAD_BYTES:
+        raise TypeError(f"{what} превышает {MAX_PAYLOAD_BYTES} байт")
+    if not only_str_keys:
         raise TypeError(f"{what}: ключи словарей должны быть строками")
     return value
 

@@ -1,0 +1,17 @@
+# Режим scaled: TLS + reverse proxy. Статику и SPA fallback отдаёт api (ADR-3).
+# Домен — из переменной окружения PUBLIC_DOMAIN (в репозитории доменов нет).
+{$PUBLIC_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# SSE (/api/.../stream) и WebSocket (/ws) проходят без буферизации.
+	reverse_proxy api:8000 {
+		flush_interval -1
+	}
+}

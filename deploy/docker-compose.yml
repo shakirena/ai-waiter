@@ -1,0 +1,94 @@
+# Режим scaled (ТЗ 8, 9.3; ADR-6). Запуск из корня репозитория:
+#   docker compose -f deploy/docker-compose.yml --env-file .env up -d --build
+# Адреса — только имена сервисов; наружу открыт только caddy (80/443).
+name: ai-waiter
+
+x-app: &app
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  image: ai-waiter:local
+  env_file: ../.env
+  environment:
+    APP_MODE: scaled
+    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:?}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:?}
+    REDIS_URL: redis://redis:6379/0
+    MEDIA_DIR: media
+  volumes:
+    - media:/app/backend/media
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:?}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # Появится в #7 (Alembic):
+  # migrate:
+  #   <<: *app
+  #   command: ["alembic", "upgrade", "head"]
+  #   restart: "no"
+
+  api:
+    <<: *app
+    command:
+      - sh
+      - -c
+      - exec uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000 --workers ${API_WORKERS:-2} --proxy-headers --forwarded-allow-ips='*'
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    <<: *app
+    command: ["arq", "app.core.scaled.worker.WorkerSettings"]
+
+  caddy:
+    image: caddy:2
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  media:
+  caddy_data:
+  caddy_config:

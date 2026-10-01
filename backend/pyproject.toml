@@ -1,0 +1,88 @@
+[project]
+name = "ai-waiter"
+version = "0.1.0"
+description = "Backend ИИ-официанта: чат гостя, панель официанта, админка, Integration API"
+readme = "../README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.4",
+    # sqlalchemy[asyncio], asyncpg, alembic — добавляются в #7 (ADR-5: драйвер asyncpg)
+    "apscheduler>=3.10,<4",
+]
+
+[project.optional-dependencies]
+# Режим scaled (ADR-1): Redis pub/sub, rate-limit и очередь arq.
+# В режиме single эти пакеты не нужны и не импортируются.
+scaled = [
+    "redis>=5.0",
+    "arq>=0.26",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "httpx>=0.27",
+    "fakeredis>=2.23",  # in-memory замена Redis для unit-тестов scaled-реализаций (AC-4)
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F",   # pycodestyle, pyflakes
+    "I",             # isort
+    "UP",            # pyupgrade
+    "B",             # bugbear
+    "ASYNC",         # блокирующие вызовы в async-коде
+    "S",             # bandit
+    "DTZ",           # только aware-datetime (timestamptz)
+    "PTH",           # только pathlib (переносимость, ADR-5)
+    "TID",           # banned-api: граница Redis (ADR-1)
+    "RUF",
+]
+# Тексты и docstring-и на русском: кириллица не должна считаться «похожими на латиницу» символами.
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"redis".msg = "Redis только в app/core/scaled/ — используйте EventBus/TaskScheduler/RateLimiter (ADR-1)"
+"arq".msg = "arq только в app/core/scaled/ — используйте TaskScheduler (ADR-1)"
+"apscheduler".msg = "APScheduler только в app/core/single/ — используйте TaskScheduler (ADR-1)"
+"psycopg".msg = "Драйвер БД — asyncpg (ADR-5): psycopg async требует смены event loop policy на Windows"
+"psycopg2".msg = "Драйвер БД — asyncpg (ADR-5)"
+
+[tool.ruff.lint.per-file-ignores]
+"app/core/scaled/**" = ["TID251"]
+"app/core/single/**" = ["TID251"]
+"tests/**" = ["S101", "S105", "S106", "TID251"]
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-ra --strict-markers"
+markers = [
+    "db: требует PostgreSQL (только Linux-джоб CI)",
+    "scaled: требует настоящий Redis (только Linux-джоб CI); с fakeredis маркер не нужен",
+]
+
+[tool.coverage.run]
+source = ["app"]
+branch = true

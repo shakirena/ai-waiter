@@ -1,1 +1,13 @@
 @import "tailwindcss";
+
+/* Базовые стили приложения. Mobile-first (NFR-2). overflow-x намеренно не скрывается: переполнение по ширине — ошибка вёрстки, а не то, что нужно прятать. */
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    @apply min-h-dvh bg-white font-sans text-gray-900 antialiased;
+  }
+}

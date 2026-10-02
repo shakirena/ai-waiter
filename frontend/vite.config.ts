@@ -63,6 +63,12 @@ export default defineConfig(({ mode }) => {
       environment: "jsdom",
       setupFiles: ["./src/test/setup.ts"],
       globals: false,
+      coverage: {
+        provider: "v8",
+        include: ["src/**/*.{ts,tsx}"],
+        exclude: ["src/**/*.test.{ts,tsx}", "src/test/**", "src/**/*.d.ts", "src/api/types.ts"], // types.ts — только типы, кода нет
+        reporter: ["text"],
+      },
     },
   };
 });

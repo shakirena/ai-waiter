@@ -12,13 +12,13 @@
 
 *(пусто)*
 
-## In Testing (WIP: 9/5, группа feature #6)
-
-#37, #38, #39, #40, #41, #42, #43, #44, #45 — kanban:testing, security:passed. Код: ветка feature/6-project-scaffold (PR в chore/feature-6-design). Ждут G5 (qa-lead).
-
-## Ready to Deploy
+## In Testing (WIP: 0/5)
 
 *(пусто)*
+
+## Ready to Deploy (группа feature #6)
+
+#37, #38, #39, #40, #41, #42, #43, #44, #45 — kanban:ready-to-deploy, qa:passed, security:passed (G5 PASS 2026-10-02). Код: ветка feature/6-project-scaffold (PR #47 в chore/feature-6-design). Ручные проверки для G6: TC-43-003 (запуск compose на Linux с доменом), TC-41-006 (вёрстка 360 px), TC-45-001 шаги 1-4 (чистая машина).
 
 ## Готово к разработке (2026-09-30)
 

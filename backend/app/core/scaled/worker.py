@@ -40,6 +40,10 @@ MAX_TRIES = 3
 JOB_TIMEOUT = timedelta(minutes=5)
 # Результаты не храним: дедупликация по job_id действует, пока задача в очереди или выполняется.
 KEEP_RESULT_SECONDS = 0
+# Как часто worker обновляет ключ здоровья в Redis (TTL ключа — интервал + 1 с). По нему
+# работает ``arq --check`` — healthcheck контейнера worker в deploy/docker-compose.yml.
+# Значение arq по умолчанию (1 час) не позволило бы заметить зависший worker.
+HEALTH_CHECK_INTERVAL = timedelta(seconds=60)
 
 
 def _wrap_task(name: str, handler: TaskHandler) -> Any:
@@ -137,6 +141,7 @@ def build_worker_settings(settings: Settings, registry: TaskRegistry) -> type:
         "max_tries": MAX_TRIES,
         "job_timeout": JOB_TIMEOUT,
         "keep_result": KEEP_RESULT_SECONDS,
+        "health_check_interval": HEALTH_CHECK_INTERVAL,
     }
     return type("WorkerSettings", (), attrs)
 

@@ -1,6 +1,12 @@
-# Режим scaled (ТЗ 8, 9.3; ADR-6). Запуск из корня репозитория:
-#   docker compose -f deploy/docker-compose.yml --env-file .env up -d --build
-# Адреса — только имена сервисов; наружу открыт только caddy (80/443).
+# Режим scaled (ТЗ 8, 9.3; ADR-6). Подготовка и запуск из корня репозитория:
+#   cp .env.example deploy/.env      # заполнить раздел «Только docker-compose» и ключи
+#   docker compose -f deploy/docker-compose.yml up -d --build
+# deploy/.env (рядом с этим файлом) читается и для подстановки ${...}, и как env_file
+# сервисов api/worker. Он не коммитится (.gitignore). Обязательные переменные помечены
+# ${ИМЯ:?...}: без них compose не запустится.
+#
+# Сеть: наружу открыт только caddy (80/443). api, worker, postgres и redis портов не
+# публикуют и обращаются друг к другу по именам сервисов.
 name: ai-waiter
 
 x-app: &app
@@ -8,40 +14,54 @@ x-app: &app
     context: ..
     dockerfile: deploy/Dockerfile
   image: ai-waiter:local
-  env_file: ../.env
+  env_file: .env
+  # environment перекрывает env_file: режим и адреса хранилищ задаются здесь.
   environment:
     APP_MODE: scaled
-    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:?}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:?}
+    APP_ENV: prod
+    PUBLIC_BASE_URL: https://${PUBLIC_DOMAIN:?задайте PUBLIC_DOMAIN в deploy/.env}
+    # Пароль должен быть допустим в URL (буквы, цифры, - _ .), иначе строка подключения сломается.
+    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:?задайте POSTGRES_USER}:${POSTGRES_PASSWORD:?задайте POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:?задайте POSTGRES_DB}
     REDIS_URL: redis://redis:6379/0
     MEDIA_DIR: media
   volumes:
     - media:/app/backend/media
+  networks:
+    - backend
   depends_on:
     postgres:
       condition: service_healthy
     redis:
       condition: service_healthy
+  security_opt:
+    - no-new-privileges:true
   restart: unless-stopped
 
 services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:?}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
-      POSTGRES_DB: ${POSTGRES_DB:?}
+      POSTGRES_USER: ${POSTGRES_USER:?задайте POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задайте POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?задайте POSTGRES_DB}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks:
+      - backend
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 5s
       retries: 20
+      start_period: 10s
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "no"]
+    # Очередь arq и pub/sub; задачи идемпотентны (ADR-1), долговременное хранение не нужно.
+    command: ["redis-server", "--appendonly", "no", "--save", ""]
+    networks:
+      - backend
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -49,43 +69,86 @@ services:
       retries: 20
     restart: unless-stopped
 
-  # Появится в #7 (Alembic):
-  # migrate:
-  #   <<: *app
-  #   command: ["alembic", "upgrade", "head"]
-  #   restart: "no"
+  # Миграции Alembic появятся в #7 (отдельный одноразовый сервис migrate на том же образе).
 
   api:
     <<: *app
+    # --proxy-headers: адрес клиента берётся из X-Forwarded-For, но только если запрос пришёл
+    # из подсети edge, где кроме api находится лишь caddy. Запросы из сети backend (worker,
+    # postgres, redis) не считаются доверенными, поэтому подделать адрес клиента оттуда нельзя.
     command:
-      - sh
-      - -c
-      - exec uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000 --workers ${API_WORKERS:-2} --proxy-headers --forwarded-allow-ips='*'
+      - uvicorn
+      - app.main:create_app
+      - --factory
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - ${API_WORKERS:-2}
+      - --proxy-headers
+      - --forwarded-allow-ips=${EDGE_SUBNET:?задайте EDGE_SUBNET (подсеть сети caddy-api)}
+    networks:
+      - backend
+      - edge
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 20s
 
   worker:
     <<: *app
     command: ["arq", "app.core.scaled.worker.WorkerSettings"]
+    # arq --check читает из Redis ключ здоровья, который worker обновляет раз в 60 с
+    # (HEALTH_CHECK_INTERVAL в app/core/scaled/worker.py, TTL ключа 61 с). Нет ключа — код 1.
+    healthcheck:
+      test: ["CMD", "arq", "--check", "app.core.scaled.worker.WorkerSettings"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
   caddy:
     image: caddy:2
     environment:
-      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?}
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?задайте PUBLIC_DOMAIN в deploy/.env}
     ports:
       - "80:80"
       - "443:443"
+      - "443:443/udp" # HTTP/3
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    networks:
+      - edge
+    # Admin API Caddy слушает только localhost:2019 внутри контейнера; ответ на GET /config/
+    # означает, что процесс жив и конфигурация загружена. wget — из busybox образа caddy.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     depends_on:
       api:
         condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
+
+networks:
+  # postgres, redis, api, worker.
+  backend:
+  # Только caddy и api. Подсеть задаётся явно, чтобы api доверял заголовкам X-Forwarded-*
+  # только из неё (см. --forwarded-allow-ips). Выбирается администратором из частных диапазонов
+  # так, чтобы не пересекаться с другими сетями хоста.
+  edge:
+    ipam:
+      config:
+        - subnet: ${EDGE_SUBNET:?задайте EDGE_SUBNET (подсеть сети caddy-api)}
 
 volumes:
   pgdata:

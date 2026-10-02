@@ -143,12 +143,14 @@ def test_worker_settings_attributes_are_in_class_dict() -> None:
         "max_tries",
         "job_timeout",
         "keep_result",
+        "health_check_interval",
     ):
         assert name in attrs
     redis_settings: RedisSettings = attrs["redis_settings"]
     assert (redis_settings.host, redis_settings.port, redis_settings.database) == ("redis", 6379, 2)
     assert attrs["keep_result"] == 0
     assert attrs["job_timeout"] == timedelta(minutes=5)
+    assert attrs["health_check_interval"] == timedelta(seconds=60)
     assert attrs["job_serializer"] is serialize_job
     assert attrs["job_deserializer"] is deserialize_job
     worker = create_worker(settings_cls, handle_signals=False)

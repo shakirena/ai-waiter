@@ -12,9 +12,9 @@
 
 *(пусто)*
 
-## In Testing (WIP: 0/5)
+## In Testing (WIP: 9/5, группа feature #6)
 
-*(пусто)*
+#37, #38, #39, #40, #41, #42, #43, #44, #45 — kanban:testing, security:passed. Код: ветка feature/6-project-scaffold (PR в chore/feature-6-design). Ждут G5 (qa-lead).
 
 ## Ready to Deploy
 

@@ -245,6 +245,7 @@ npm run build
 - Unit-тесты не требуют внешних сервисов: реализации `scaled` проверяются на fakeredis.
 - `db` — тесты с настоящим PostgreSQL, `scaled` — с настоящим Redis. В CI они выполняются только в Linux-джобе `backend-services` (`uv run pytest -q -m "db or scaled"`), а на обеих ОС — `uv run pytest -q -m "not db and not scaled"`.
 - Локально `uv run pytest -q` запускает всё; тесты с настоящим Redis пропускаются (skipped), если не задан `REDIS_URL`.
+- Покрытие: backend — `uv run pytest -q --cov=app --cov-report=term-missing`, frontend — `npm run test -- --run --coverage` (отчёт по `src/`). Цель — не ниже 95% по новому коду.
 
 ## Конфигурация
 

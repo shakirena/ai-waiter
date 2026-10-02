@@ -77,7 +77,7 @@ docs/                 ТЗ, спецификации, архитектура, т
 - **Node.js LTS 22 или новее** (`engines` в `frontend/package.json`) вместе с npm.
 - **Git.**
 
-Установка uv (любой из способов, подробнее — в [документации uv](https://docs.astral.sh/uv/getting-started/installation/)):
+Установка uv (любой из способов, подробнее — в [документации uv](https://docs.astral.sh/uv/getting-started/installation/)). Способы с `irm | iex` и `curl | sh` запускают скачанный скрипт: пользуйтесь ими только с официального адреса astral.sh и при желании сначала прочитайте скрипт; безопаснее `winget` или `pip`:
 
 ```powershell
 # Windows (PowerShell)
@@ -193,7 +193,7 @@ Vite открывается на http://localhost:5173 (если порт зан
 
    | Переменная | Назначение |
    |---|---|
-   | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | учётные данные PostgreSQL; пароль — только символы, допустимые в URL (буквы, цифры, `-`, `_`, `.`) |
+   | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | учётные данные PostgreSQL; пароль замените на случайный (например, `openssl rand -hex 24`), значение `change-me` из примера использовать нельзя; допустимы только символы, допустимые в URL (буквы, цифры, `-`, `_`, `.`) |
    | `PUBLIC_DOMAIN` | домен для Caddy и `PUBLIC_BASE_URL`, например `menu.example.com` |
    | `EDGE_SUBNET` | частная подсеть сети `caddy`–`api`, не пересекающаяся с другими сетями хоста; `api` доверяет `X-Forwarded-For` только из неё |
 

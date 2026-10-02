@@ -6,7 +6,13 @@ import pytest
 from arq.connections import ArqRedis
 from redis.asyncio import Redis
 
-from app.core.scaled.connection import arq_redis_from_url, deserialize_job, redis_from_url, serialize_job
+from app.core.scaled.connection import (
+    CONNECT_TIMEOUT_SECONDS,
+    arq_redis_from_url,
+    deserialize_job,
+    redis_from_url,
+    serialize_job,
+)
 
 REDIS_URL = "redis://:s3cret@redis:6379/3"
 
@@ -18,6 +24,16 @@ async def test_redis_from_url_does_not_connect() -> None:
     assert (kwargs["host"], kwargs["port"], kwargs["db"]) == ("redis", 6379, 3)
     assert not client.connection_pool._available_connections  # конструктор не открывает соединений
     await client.aclose()
+
+
+async def test_clients_have_connect_timeout() -> None:
+    """Зависший Redis не должен держать запросы api до таймаута ОС."""
+    client = redis_from_url(REDIS_URL)
+    assert client.connection_pool.connection_kwargs["socket_connect_timeout"] == CONNECT_TIMEOUT_SECONDS
+    await client.aclose()
+    pool = arq_redis_from_url(REDIS_URL)
+    assert pool.connection_pool.connection_kwargs["socket_connect_timeout"] == CONNECT_TIMEOUT_SECONDS
+    await pool.aclose(close_connection_pool=True)
 
 
 async def test_arq_redis_from_url_uses_json_serializer() -> None:

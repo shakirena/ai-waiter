@@ -116,6 +116,17 @@ async def test_retry_after_falls_back_to_window_without_ttl() -> None:
     assert (result.allowed, result.remaining, result.retry_after) == (False, 0, 2.0)
 
 
+async def test_key_without_ttl_is_repaired() -> None:
+    """Ключ без TTL (PTTL = -1) получает срок жизни — иначе клиент заблокирован навсегда."""
+    client, _ = _mock_client([5, 0, -1])
+    client.pexpire = AsyncMock()
+    limiter = RedisRateLimiter(REDIS_URL, client_factory=lambda url: client)
+    await limiter.start()
+    result = await limiter.hit(KEY, limit=1, window=timedelta(seconds=2))
+    client.pexpire.assert_awaited_once_with(KEY_PREFIX + KEY, 2000)
+    assert (result.allowed, result.retry_after) == (False, 2.0)
+
+
 async def test_reset_clears_counter(limiter: RedisRateLimiter) -> None:
     await limiter.hit(KEY, limit=1, window=WINDOW)
     await limiter.reset(KEY)

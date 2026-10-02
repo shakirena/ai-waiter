@@ -47,6 +47,11 @@ class RedisRateLimiter(RateLimiter):
             pipe.pexpire(redis_key, window_ms, nx=True)
             pipe.pttl(redis_key)
             count, _, ttl_ms = await pipe.execute()
+        if ttl_ms == -1:
+            # Самовосстановление: ключ без TTL (например, Redis старше 7.0 не принял PEXPIRE NX)
+            # навсегда заблокировал бы клиента после исчерпания лимита.
+            await client.pexpire(redis_key, window_ms)
+            ttl_ms = window_ms
         allowed = count <= limit
         retry_after = 0.0 if allowed else (ttl_ms if ttl_ms > 0 else window_ms) / 1000
         return RateLimitResult(

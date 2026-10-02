@@ -16,6 +16,11 @@ from typing import Any
 from arq.connections import ArqRedis
 from redis.asyncio import ConnectionPool, Redis
 
+# Таймаут установки соединения: зависший Redis не должен держать запросы api до таймаута ОС.
+# socket_timeout намеренно не задан: pub/sub-читатель легально простаивает без сообщений.
+CONNECT_TIMEOUT_SECONDS = 3.0
+HEALTH_CHECK_INTERVAL_SECONDS = 30
+
 RedisFactory = Callable[[str], Redis]
 ArqRedisFactory = Callable[[str], ArqRedis]
 
@@ -37,13 +42,21 @@ def deserialize_job(raw: bytes) -> dict[str, Any]:
 
 def redis_from_url(url: str) -> Redis:
     """Клиент Redis для шины событий и rate-limiter-а (без сетевых вызовов при создании)."""
-    return Redis.from_url(url)
+    return Redis.from_url(
+        url,
+        socket_connect_timeout=CONNECT_TIMEOUT_SECONDS,
+        health_check_interval=HEALTH_CHECK_INTERVAL_SECONDS,
+    )
 
 
 def arq_redis_from_url(url: str) -> ArqRedis:
     """Клиент arq для постановки задач; сериализация совпадает с ``WorkerSettings``."""
     return ArqRedis(
-        pool_or_conn=ConnectionPool.from_url(url),
+        pool_or_conn=ConnectionPool.from_url(
+            url,
+            socket_connect_timeout=CONNECT_TIMEOUT_SECONDS,
+            health_check_interval=HEALTH_CHECK_INTERVAL_SECONDS,
+        ),
         job_serializer=serialize_job,
         job_deserializer=deserialize_job,
     )

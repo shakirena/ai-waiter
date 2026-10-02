@@ -37,7 +37,7 @@
 | Rate limit | в памяти | Redis |
 | Нужны Redis, arq, Docker | **нет** | да |
 
-В режиме `single` Redis, arq и Docker не нужны и не запускаются: пакеты `redis` и `arq` даже не устанавливаются без `--extra scaled`.
+В режиме `single` Redis, arq и Docker не нужны и не запускаются. Пакеты режима `scaled` подключаются через `uv sync --extra scaled`; в режиме `single` код их не импортирует.
 
 ## Стек
 
@@ -126,7 +126,7 @@ uv sync
 cd ..
 ```
 
-`uv sync` создаёт `backend/.venv` и ставит зависимости строго по `uv.lock`, включая инструменты разработки (pytest, ruff).
+`uv sync` создаёт `backend/.venv` и ставит зависимости строго по `uv.lock`, включая инструменты разработки (pytest, ruff). Для запуска этого достаточно; для тестов нужен `uv sync --extra scaled` (см. «Проверки»).
 
 ### 5. Собрать frontend
 
@@ -175,7 +175,7 @@ cd frontend
 npm run dev
 ```
 
-Vite открывается на http://localhost:5173 и проксирует на backend запросы к `/api`, `/integration`, `/health`, `/ws`, `/docs`, `/redoc`, `/openapi.json`. Адрес backend по умолчанию — `http://localhost:8000`; другой адрес задаётся переменной `VITE_API_PROXY_TARGET` (например, в `frontend/.env.local`). Если backend запущен на другом порту, укажите его здесь.
+Vite открывается на http://localhost:5173 (если порт занят, берёт следующий свободный и печатает адрес в терминале) и проксирует на backend запросы к `/api`, `/integration`, `/health`, `/ws`, `/docs`, `/redoc`, `/openapi.json`. Адрес backend по умолчанию — `http://localhost:8000`; другой адрес задаётся переменной `VITE_API_PROXY_TARGET` (например, в `frontend/.env.local`). Если backend запущен на другом порту, укажите его здесь.
 
 ## Режим scaled (Docker Compose)
 
@@ -224,7 +224,7 @@ Vite открывается на http://localhost:5173 и проксирует �
 Backend (из каталога `backend/`):
 
 ```bash
-uv sync --extra scaled          # как в CI: с пакетами redis и arq для тестов режима scaled
+uv sync --extra scaled          # как в CI; без arq тесты режима scaled не соберутся
 uv run ruff check .
 uv run ruff format --check .
 uv run pytest -q

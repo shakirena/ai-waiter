@@ -4,9 +4,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Состояние проекта
 
-Этап проектирования, кода ещё нет. Источник требований — `docs/TZ.md` (на русском). Задачи — GitHub Issues в `shakirena/ai-waiter` с milestones «Этап 0…4» и доской https://github.com/users/shakirena/projects/7. В issue указаны разделы ТЗ (FR-x, INT-x, AI-x, NFR-x); при реализации сверяйтесь с ними.
+Каркас реализован (issue #6): backend (FastAPI, `/health`, `/health/ready`, интерфейсы `EventBus`/`TaskScheduler`/`RateLimiter` с реализациями `single` и `scaled`), frontend-заготовка (PWA, заглушки `/t/{token}`, `/staff`, `/admin`), Docker Compose для `scaled`, CI на Linux и Windows. Бизнес-логики нет: модель данных и БД (#7), меню, ИИ-диалог, заказы и коннекторы — этапы 1–4. Источник требований — `docs/TZ.md` (на русском). Задачи — GitHub Issues в `shakirena/ai-waiter` с milestones «Этап 0…4» и доской https://github.com/users/shakirena/projects/7. В issue указаны разделы ТЗ (FR-x, INT-x, AI-x, NFR-x); при реализации сверяйтесь с ними. Инструкция запуска — `README.md`.
 
-Раздел «Команды» появится вместе с каркасом (issue #6).
+## Команды
+
+```bash
+# backend (из backend/; Python 3.12 uv ставит сам)
+uv sync --extra scaled                        # как в CI; без --extra scaled тесты scaled не соберутся
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest -q                              # тесты с настоящим Redis пропускаются без REDIS_URL
+uv run pytest -q -m "not db and not scaled"   # как в матрице CI (Linux и Windows)
+uv run python -m app                          # режим single, 127.0.0.1:8000 (.env в корне репозитория)
+
+# frontend (из frontend/; Node 22+)
+npm ci
+npm run lint
+npm run typecheck
+npm run test -- --run
+npm run build                                 # frontend/dist, его раздаёт backend
+npm run dev                                   # Vite :5173 с proxy на backend (VITE_API_PROXY_TARGET)
+
+# scaled (из корня; deploy/.env из .env.example, раздел «Только docker-compose»)
+docker compose -f deploy/docker-compose.yml up -d --build
+```
+
+Маркеры pytest: `db` (нужен PostgreSQL), `scaled` (нужен настоящий Redis) — в CI только в Linux-джобе `backend-services`. Все переменные окружения — в `.env.example`.
 
 ## Что это
 

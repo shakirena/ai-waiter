@@ -31,26 +31,46 @@
 
 ## Build Commands
 
-*Появятся с каркасом (issue #6). Ожидаемо:*
+Подробно — README.md (локальный запуск, scaled, проверки) и CLAUDE.md «Команды».
 
 ```bash
-cd backend && ruff check . && pytest -q
-cd frontend && npm run lint && npm run test -- --run && npm run build
+# backend (из backend/)
+uv sync --extra scaled          # как в CI; без extra тесты scaled не соберутся (нет arq)
+uv run ruff check . && uv run ruff format --check . && uv run pytest -q
+uv run python -m app            # single, 127.0.0.1:8000; .env в корне репозитория (из .env.example)
+# frontend (из frontend/, Node 22+)
+npm ci && npm run lint && npm run typecheck && npm run test -- --run && npm run build
+npm run dev                     # Vite :5173, proxy на backend
+# scaled (из корня, deploy/.env)
+docker compose -f deploy/docker-compose.yml up -d --build
 ```
 
-## Layout (план, issue #6)
+CI: `.github/workflows/ci.yml` — матрица ubuntu/windows (`pytest -m "not db and not scaled"`, frontend lint/typecheck/test/build) + Linux-джоб `backend-services` с postgres и redis (`-m "db or scaled"`).
+
+## Layout
 
 ```
-backend/     FastAPI app, alembic/, tests/
-frontend/    React PWA
-deploy/      docker-compose.yml (scaled), скрипты службы Windows (single)
-e2e-tests/   Playwright (TypeScript)
-docs/        TZ.md, specs/, arch/, test-cases/
+backend/            FastAPI, uv (pyproject.toml, uv.lock, .python-version 3.12)
+  app/__main__.py   python -m app (single)
+  app/main.py       create_app(), lifespan, SPA последним
+  app/api/          health.py (/health, /health/ready), deps.py
+  app/core/         config (Settings, env), log, container, интерфейсы events/scheduler/ratelimit
+  app/core/single/  in-memory EventBus, APScheduler, in-memory RateLimiter
+  app/core/scaled/  RedisEventBus, ArqTaskScheduler, RedisRateLimiter, arq worker
+  app/web/spa.py    раздача frontend/dist, SPA fallback, RESERVED_PREFIXES
+  tests/            pytest (маркеры db, scaled)
+frontend/           React + Vite + TS + Tailwind, PWA; pages/ (заглушки Guest/Staff/Admin), api/client.ts
+deploy/             Dockerfile, docker-compose.yml (postgres, redis, api, worker, caddy), Caddyfile
+docs/               TZ.md, specs/, arch/, test-cases/
+.github/workflows/  ci.yml
+.env.example        все переменные окружения
 ```
+
+Ещё нет: `backend/alembic/`, модели БД (#7), `e2e-tests/` (Playwright), скрипты службы Windows (single).
 
 ## Current State
 
-Этап проектирования, кода нет. 36 issues в milestones «Этап 0…4». Этап 0 (#2–#5) — задачи в кассе restoran (отдельный репозиторий, не здесь).
+Каркас (issue #6, stories #37–#45) реализован в ветке `feature/6-project-scaffold`: `/health`, интерфейсы и обе реализации режимов, frontend-заглушки, раздача SPA backend-ом, Docker Compose, CI, README. Бизнес-логики нет, БД не подключена (`DATABASE_URL` в конфигурации, используется с #7). Дальше — этапы 1–4 (36 issues в milestones «Этап 0…4»). Этап 0 (#2–#5) — задачи в кассе restoran (отдельный репозиторий, не здесь).
 
 ## Labels
 

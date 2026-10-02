@@ -12,3 +12,30 @@
 **Ограничения:** Реализации для `scaled` (отдельная story); Межпроцессная доставка событий (single — один процесс); Сохранение задач планировщика между перезапусками
 **Зависимости:** #38
 **Spec:** docs/specs/feature-6-project-scaffold.md
+
+---
+
+## 💻 Реализация (developer)
+
+**Branch:** wt/39-single (от feature/6-project-scaffold)
+**Новые файлы:**
+- backend/tests/test_single_mode.py — AC-3 целиком через lifespan приложения (`APP_MODE=single`, без `REDIS_URL`): событие доходит до подписчика, задача с `delay=1 с` выполняется один раз через ~1 с, третий запрос при `limit=2` отклонён с `retry_after`, после остановки подписка закрыта, задач-обработчиков не осталось, в логе нет `NotImplementedError` и ошибок компонентов
+
+**Изменённые файлы:**
+- backend/app/core/single/events.py — `InMemoryEventBus`: у каждой подписки свой буфер (`deque` + `asyncio.Event`) размером `queue_size` (по умолчанию 100); `publish` не ждёт подписчиков, при переполнении отбрасывает самое старое событие, предупреждение в лог на 1-м и далее каждом 100-м отброшенном (`channel`, `dropped_total`); подписчик получает копию события после круга `model_dump_json` → `model_validate_json` (как через Redis); `stop` закрывает все подписки (итераторы завершаются), подписка после `stop` — RuntimeError, `publish` после `stop` — no-op, `start` снова разрешает; `ping` — `not stopped`; `publish` не-`Event` — TypeError
+- backend/app/core/single/scheduler.py — `InProcessTaskScheduler` на `AsyncIOScheduler` (UTC, in-memory jobstore, `misfire_grace_time=None`, `coalesce=True`): APScheduler только запускает короткий «запускатель», обработчик идёт отдельной asyncio-задачей, состояние (ожидает / выполняется) ведётся в самом классе; `enqueue` сначала вызывает `validate_task` и `validate_delay`, затем проверяет `job_id` и что планировщик запущен (иначе RuntimeError); payload копируется через JSON; `job_id` дедуплицирует и ожидающую, и выполняющуюся задачу; `cancel` — True только для ещё не начатой задачи (гонка «APScheduler уже передал задачу исполнителю» закрыта проверкой в запускателе); периодические задачи реестра — `IntervalTrigger(minutes=every_minutes)`, повторный запуск пропускается, пока не завершился предыдущий; исключения обработчиков — `logger.exception` с `task`; `stop` ждёт событие `EVENT_SCHEDULER_SHUTDOWN`, затем выполняющиеся обработчики не дольше `shutdown_timeout` (5 с), остальные отменяет и дожидается; повторный `start` после `stop` работает
+- backend/app/core/single/ratelimit.py — `InMemoryRateLimiter`: фиксированное окно от первого обращения (длительность фиксируется первым `hit`, как TTL в Redis), отклонённые обращения тоже считаются, `retry_after` — до конца окна; `OrderedDict` в порядке начала окон; при достижении `max_keys` — удаление истёкших окон (полный проход не чаще раза в секунду), затем самых старых ключей; `validate_hit_args` первым делом, пустой ключ — ValueError; `reset` — удаление ключа; часы (`time.monotonic`) подменяемы для тестов
+- backend/tests/test_events.py, test_scheduler.py, test_ratelimit.py — skip-заглушки заменены реальными тестами single (изоляция tenant, медленный подписчик, копии событий, остановка; задача через ~1 с, дедупликация, cancel, периодические, ошибки обработчиков, остановка с ожиданием и отменой; окно, retry_after, вытеснение ключей) с управляемыми часами и короткими задержками
+
+**Build:** ruff check OK · ruff format --check OK (42 файла) · pytest (test_events, test_scheduler, test_ratelimit, test_single_mode + все тесты #37/#38) — 228 passed; покрытие `app.core.single` — 99 %
+
+**Решения и отклонения:**
+- Подписчик in-memory получает не тот же объект `Event`, а его JSON-копию — поведение совпадает со scaled, подписчики не делят изменяемый `payload`.
+- `enqueue` до `start`/после `stop` — RuntimeError (а не тихая постановка): в lifespan планировщик стартует последним, бизнес-код вызывает `enqueue` только из запросов.
+- Дедупликация по `job_id` в single действует, пока задача ожидает или выполняется; после завершения id снова свободен (arq дополнительно хранит результат — `keep_result`; для идемпотентных обработчиков разница несущественна).
+- `ping()` шины после `stop` возвращает False (в single readiness всё равно `"skipped"`).
+- Проверка непустого ключа в `hit` и `job_id` в `enqueue` — сверх общих функций #38; если #40 их не делает, стоит выровнять.
+
+**Для следующих stories:**
+- #20: подписка WebSocket — `async with bus.subscribe(tenant_channel(...)) as events: async for ...`; при `stop` итератор завершается сам, отдельная отмена не нужна.
+- #23: бизнес-таймеры — `@registry.periodic`; периодический запуск не перекрывается, отложенные `enqueue` теряются при перезапуске.

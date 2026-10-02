@@ -14,10 +14,10 @@
 
 **Решение.**
 
-1. Интерфейсы (ABC) и общие типы — в `app/core/`: `events.py` → `Event`, `tenant_channel`, `EventBus`; `scheduler.py` → `TaskRegistry`, `PeriodicTask`, `TaskScheduler`; `ratelimit.py` → `RateLimitResult`, `rate_key`, `RateLimiter`. Эти модули не импортируют сторонних библиотек очередей/кэшей.
+1. Интерфейсы (ABC) и общие типы — в `app/core/`: `events.py` → `Event`, `tenant_channel`, `EventBus`; `scheduler.py` → `TaskRegistry`, `PeriodicTask`, `TaskScheduler`; `ratelimit.py` → `RateLimitResult`, `rate_key`, `RateLimiter`. Эти модули не импортируют сторонних библиотек очередей/кэшей. Интерфейсы также содержат `ping()` (EventBus, RateLimiter — для `/health/ready`), `RateLimiter.reset()`, `TaskScheduler.cancel()`. Общая проверка JSON-сериализуемости payload событий и задач (только `dict` со строковыми ключами, строгий JSON, не более 1 МиБ) — `app/core/payload.py` (`ensure_json_object`); используется и в `single`, и в `scaled`.
 2. Реализации — в двух пакетах реализаций (spec AC-2, NFR-7):
    - `app/core/single/`: `InMemoryEventBus`, `InProcessTaskScheduler` (APScheduler 3.x, `AsyncIOScheduler`), `InMemoryRateLimiter`;
-   - `app/core/scaled/`: `RedisEventBus`, `ArqTaskScheduler`, `RedisRateLimiter`, `worker.py` с `WorkerSettings` для arq.
+   - `app/core/scaled/`: `RedisEventBus`, `ArqTaskScheduler`, `RedisRateLimiter`, `connection.py` (ленивые клиенты Redis/arq с таймаутом подключения, JSON-сериализатор задач arq вместо pickle), `worker.py` с `WorkerSettings` для arq. `WorkerSettings` собирается при первом обращении (модульный `__getattr__`, `build_worker_settings(settings, registry)`), чтобы импорт модуля не читал окружение.
 3. `app/core/container.py`: `build_container(settings, registry) -> Container` — единственное место, где читается `settings.app_mode` для выбора реализаций. Пакет реализаций импортируется лениво внутри своей ветки: в `single` не импортируются `redis`/`arq` (и не нужны установленными), в `scaled` — `apscheduler`.
 4. `Container` создаётся в `lifespan` приложения и кладётся в `app.state.container`; эндпоинты получают зависимости через `app/api/deps.py` (`Depends(get_event_bus)` и т. п.). Глобальных синглтонов нет — тесты подставляют свой `Settings`/`Container`.
 5. Граница закреплена дважды: `ruff` (`flake8-tidy-imports.banned-api`, `TID251`) запрещает `redis`/`arq` вне `app/core/scaled/**` и `apscheduler` вне `app/core/single/**`; тест `tests/test_import_boundaries.py` (AST-обход `app/`) проверяет то же в pytest (spec AC-2). CI падает при нарушении.
@@ -40,7 +40,8 @@
 **Последствия.**
 - В `single` нельзя запускать несколько процессов uvicorn: in-memory шина и лимиты не разделяются между процессами. Валидатор `Settings` отклоняет `APP_MODE=single` при `API_WORKERS>1`; `python -m app` в `single` всегда запускает один процесс.
 - arq находится в режиме поддержки; если его придётся заменить (например, на taskiq/saq), меняется только `app/core/scaled/scheduler.py` и `worker.py`.
-- Unit-тесты `scaled`-реализаций используют `fakeredis` (dev-зависимость, работает на Windows) — spec AC-4. Тесты с настоящим Redis/arq-worker помечаются `@pytest.mark.scaled` и идут только в Linux-джобе CI с сервисом Redis.
+- Unit-тесты `scaled`-реализаций используют `fakeredis` (dev-зависимость, работает на Windows) — spec AC-4; лежат в отдельных файлах `tests/test_scaled_*.py` (общие тестовые двойники — `tests/doubles.py`, `tests/fake_redis.py`). Тесты с настоящим Redis (`tests/test_scaled_redis.py`) помечены `@pytest.mark.scaled` и пропускаются, если не задан `REDIS_URL`; идут только в Linux-джобе CI с сервисом Redis.
+- Недоступность Redis при старте не роняет процесс: `start_container` логирует ошибку компонента и продолжает, о неготовности сообщает `/health/ready` (503). Остановка — в обратном порядке, ошибка одного компонента не мешает остальным.
 
 ---
 
@@ -49,7 +50,7 @@
 **Контекст.** ТЗ 9.2 и NFR-4/NFR-8: конфигурация только в env (`.env`), одинаковая для Windows и Docker; секреты не в коде.
 
 **Решение.**
-- `app/core/config.py`: класс `Settings(BaseSettings)`, без префикса имён. Источники по приоритету: переменные окружения процесса → `.env` в текущем каталоге → `../.env` (корень репозитория при запуске из `backend/`). Файл `.env` не коммитится; в репозитории — `.env.example` в корне.
+- `app/core/config.py`: класс `Settings(BaseSettings)`, без префикса имён. Источники по приоритету: переменные окружения процесса → `.env` в текущем каталоге → `../.env` (корень репозитория при запуске из `backend/`). Файл `.env` не коммитится; в репозитории — `.env.example` в корне. Пустое значение («`ПЕРЕМЕННАЯ=`») считается незаданным. Для Docker Compose (`scaled`) файл конфигурации — `deploy/.env` (копия `.env.example`, см. ADR-6); внутрь контейнера он попадает как `env_file`, а не как `.env` в каталоге backend.
 - Секреты (`DATABASE_URL`, `REDIS_URL`, `ANTHROPIC_API_KEY`, `SENTRY_DSN`) — `SecretStr`: не попадают в `repr`, логи и трассировки.
 - `DATABASE_URL` без значения по умолчанию (нет «дефолтного пароля» в публичном репозитории); схема — строго `postgresql+asyncpg://`. В каркасе он **необязателен**: подключение к PostgreSQL вне scope #6 (spec, Out of Scope), а локальный запуск по README должен работать без PostgreSQL (spec AC-9). Обязательным его делает #7 вместе с движком SQLAlchemy.
 - Пути (`MEDIA_DIR`, `FRONTEND_DIST_DIR`) — `pathlib.Path`, по умолчанию относительные. Код не содержит абсолютных путей; абсолютный путь допустим только как значение переменной окружения на конкретном сервере.
@@ -60,7 +61,7 @@
 |---|---|---|
 | `APP_MODE` | `single` \| `scaled`, `single` | Режим (ADR-1) |
 | `APP_ENV` | `dev` \| `test` \| `prod`, `dev` | В `prod` выключается `/docs`, если не задано `DOCS_ENABLED` |
-| `HOST` / `PORT` | `127.0.0.1` / `8000` | Адрес прослушивания для `python -m app`. В `single` — только `127.0.0.1` (ТЗ 9.1), снаружи через туннель |
+| `HOST` / `PORT` | `127.0.0.1` / `8000` | Адрес прослушивания для `python -m app`. В `single` — только loopback (`127.0.0.1`, `::1`, `localhost`; ТЗ 9.1), снаружи через туннель |
 | `API_WORKERS` | `1` | Число процессов api; в `single` допустимо только `1` |
 | `DATABASE_URL` | `SecretStr`, необязателен до #7 | `postgresql+asyncpg://…` |
 | `REDIS_URL` | `SecretStr`, обязателен при `scaled` | `redis://…` |
@@ -72,6 +73,9 @@
 | `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / `json` | Структурированные логи (NFR-6); `console` — для разработки |
 | `ANTHROPIC_API_KEY`, `AI_MODEL` | необязательны в каркасе | Задействуются в #11 |
 | `SENTRY_DSN` | необязателен | #32 |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `PUBLIC_DOMAIN`, `EDGE_SUBNET` | только `deploy/.env` | Не поля `Settings`: читаются только Docker Compose (подстановка `${...}`, ADR-6). `API_WORKERS` в compose — по умолчанию 2 |
+
+Для `scaled` compose сам задаёт `APP_MODE=scaled`, `APP_ENV=prod`, `DATABASE_URL`, `REDIS_URL`, `PUBLIC_BASE_URL=https://${PUBLIC_DOMAIN}`, `MEDIA_DIR` (значения из `deploy/.env` для них перекрываются). `VITE_API_PROXY_TARGET` — только dev server Vite (`frontend/.env.local`), не переменная backend.
 
 **Альтернативы.** YAML/TOML-файлы конфигурации — отклонено (ТЗ 9.2). `python-dotenv` + ручной разбор — pydantic-settings уже даёт валидацию и типы.
 
@@ -144,23 +148,24 @@ Service Worker (vite-plugin-pwa) не должен перехватывать з
 
 | Сервис | Образ | Команда | Примечание |
 |---|---|---|---|
-| `postgres` | `postgres:16` | — | том `pgdata`; healthcheck `pg_isready` |
-| `redis` | `redis:7-alpine` | `--appendonly no` | только внутренняя сеть, без публикации порта |
-| `api` | `deploy/Dockerfile` (multi-stage: node → сборка фронтенда, python → backend) | `uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000 --workers ${API_WORKERS}` | `APP_MODE=scaled`; том `media`; healthcheck `GET /health`; порт наружу не публикуется |
-| `worker` | тот же образ | `arq app.core.scaled.worker.WorkerSettings` | выполняет задачи и периодические задания |
-| `caddy` | `caddy:2` | — | порты 80/443; `reverse_proxy api:8000`; домен из `PUBLIC_DOMAIN` |
-| `migrate` | тот же образ | `alembic upgrade head` | one-shot; появится в #7 (в каркасе закомментирован) |
+| `postgres` | `postgres:16` | — | том `pgdata`; healthcheck `pg_isready`; сеть `backend` |
+| `redis` | `redis:7-alpine` | `redis-server --appendonly no --save ""` | сеть `backend`, без публикации порта; healthcheck `redis-cli ping` |
+| `api` | `deploy/Dockerfile` (multi-stage: node → сборка фронтенда, python → backend) | `uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000 --workers ${API_WORKERS:-2} --proxy-headers --forwarded-allow-ips=${EDGE_SUBNET}` | `APP_MODE=scaled`; том `media`; healthcheck `GET /health`; сети `backend` и `edge`; порт наружу не публикуется |
+| `worker` | тот же образ | `arq app.core.scaled.worker.WorkerSettings` | выполняет задачи и периодические задания; сеть `backend`; healthcheck `arq --check` (ключ здоровья в Redis, интервал `HEALTH_CHECK_INTERVAL` = 60 с в `worker.py`) |
+| `caddy` | `caddy:2` | — | порты 80/443 (и 443/udp); `reverse_proxy api:8000`; домен из `PUBLIC_DOMAIN`; сеть `edge`; healthcheck — Admin API `127.0.0.1:2019/config/` |
+| `migrate` | тот же образ | `alembic upgrade head` | one-shot; появится в #7 (в каркасе только комментарий); наследует якорь `x-app` |
 
-- Контекст сборки — корень репозитория; `.env` подключается через `env_file`. `DATABASE_URL`/`REDIS_URL` в compose указывают на имена сервисов (`postgres`, `redis`), не на IP.
-- `0.0.0.0` внутри контейнера — это bind на все интерфейсы контейнера, а не адрес сети; наружу api доступен только через Caddy.
+- Контекст сборки — корень репозитория; конфигурация — **`deploy/.env`** (рядом с compose-файлом): из него и подстановка `${...}`, и `env_file` для api/worker, поэтому `--env-file` не нужен. `DATABASE_URL`/`REDIS_URL` в compose указывают на имена сервисов (`postgres`, `redis`), не на IP. Общие настройки api/worker вынесены в якорь `x-app` (образ `ai-waiter:local`, `no-new-privileges`, `restart: unless-stopped`, `depends_on` с `service_healthy`).
+- **Две сети.** `backend` — postgres, redis, api, worker; `edge` — только caddy и api, с явной подсетью `EDGE_SUBNET`. Uvicorn доверяет `X-Forwarded-*` только из `EDGE_SUBNET` (`--forwarded-allow-ips`), поэтому подделать адрес клиента из сети `backend` нельзя. Подсеть администратор выбирает из частных диапазонов так, чтобы она не пересекалась с сетями хоста; значение шаблона — только в `.env.example` и README.
+- `0.0.0.0` внутри контейнера — это bind на все интерфейсы контейнера, а не адрес сети; наружу api доступен только через Caddy. Контейнеры api/worker работают не от root (`USER 10001`).
 - Бэкапы (NFR-9) — #31.
 
 **CI (`.github/workflows/ci.yml`).**
 
 | Джоб | ОС | Шаги |
 |---|---|---|
-| `backend` | матрица `ubuntu-latest`, `windows-latest`; Python 3.12 | `uv sync --extra scaled --frozen` → `ruff check .` → `ruff format --check .` → `pytest -m "not db and not scaled"` |
-| `backend-services` | `ubuntu-latest` + сервисы `postgres:16`, `redis:7` | `pytest -m "db or scaled"` (появится с #7/#20; в каркасе — заготовка, `continue-on-error` не используется, джоб просто пропускает пустой набор) |
+| `backend` | матрица `ubuntu-latest`, `windows-latest`; Python 3.12; shell — bash на обеих ОС | `uv sync --frozen --extra scaled` → проверка версии Python → `ruff check .` → `ruff format --check .` → `pytest -q -m "not db and not scaled"` |
+| `backend-services` | `ubuntu-latest` + сервисы `postgres:16`, `redis:7-alpine` | `pytest -q -m "db or scaled"`; `DATABASE_URL`/`REDIS_URL` задаются в env джоба. Код pytest 5 («тесты не выбраны») считается успехом с notice, остальные ненулевые коды — красная проверка (`continue-on-error` не используется) |
 | `frontend` | матрица `ubuntu-latest`, `windows-latest`; Node 22 | `npm ci` → `npm run lint` → `npm run typecheck` → `npm run test -- --run` → `npm run build` |
 
 Триггеры: `push` в `main`, `pull_request`. Секреты в CI не нужны.
@@ -182,6 +187,7 @@ Service Worker (vite-plugin-pwa) не должен перехватывать з
 | GET | `/{любой путь SPA}` | браузер | — | `200 text/html` (`index.html`) | 404, если путь с расширением и файла нет; 404 JSON для зарезервированных префиксов |
 
 - `/health` — liveness: не трогает БД и Redis, отвечает, пока жив event loop. Используют служба Windows/Docker healthcheck.
+- Реализация: `/health` — story #37, `/health/ready` — story #38 (нужен `Container` и `ping()` интерфейсов); оба в `app/api/health.py`.
 - `/health/ready` — readiness: в `scaled` — `ping()` шины и rate-limiter-а (Redis `PING`), в `single` — `"skipped"`; #7 добавляет ключ `"database"` (`SELECT 1`). Каждая проверка с таймаутом 2 с. Тело ответа не содержит текстов исключений, строк подключения и хостов — детали только в лог.
 - Значения `checks`: `"ok"`, `"fail"`, `"skipped"`. `mode`: `"single"` \| `"scaled"`.
 - Время в будущих ответах — ISO 8601 с зоной; деньги — строка `"12.50"` (к `/health` не относится).
@@ -211,6 +217,7 @@ TS-типы: `frontend/src/api/types.ts` (`HealthResponse`, `ReadinessResponse`)
 
 - **Секреты:** только env; `SecretStr` для `DATABASE_URL`, `REDIS_URL`, `ANTHROPIC_API_KEY`, `SENTRY_DSN`. `.env` в `.gitignore`, `.env.example` — только имена и безопасные заглушки. В репозитории нет IP, доменов заведения, паролей.
 - **Сеть:** `single` слушает `127.0.0.1` (ТЗ 9.1); в `scaled` наружу открыт только Caddy (80/443), postgres/redis/api без публикации портов. HTTPS — Cloudflare Tunnel / Caddy (NFR-4).
+- **Доверие к прокси:** `python -m app` (single) принимает `X-Forwarded-*` только с loopback (`TRUSTED_PROXY_IPS` в `app/__main__.py`, cloudflared на той же машине); в `scaled` uvicorn в контейнере принимает их только из подсети `edge` (`--forwarded-allow-ips=${EDGE_SUBNET}`), где кроме api находится лишь caddy; Caddy не доверяет входящему `X-Forwarded-For` клиентов. Wildcard (`'*'`) не используется.
 - **/health:** без авторизации, но без внутренних деталей (нет текстов ошибок, хостов, версий зависимостей). Версия приложения — открытая информация (репозиторий публичный).
 - **SPA fallback:** зарезервированные префиксы не отдают HTML — исключает путаницу типов ответа и «успешный 200» на несуществующий API. `StaticFiles` Starlette защищён от path traversal; `follow_symlink=False`.
 - **Мультиарендность:** каналы `EventBus` и ключи `RateLimiter` включают `tenant_id` по контракту (хелперы `tenant_channel`, `rate_key`); подписка официанта на чужой tenant исключается на уровне #20 (tenant берётся из учётной записи, не из запроса).
@@ -241,7 +248,8 @@ backend/
       events.py                      # Event, tenant_channel, EventBus (ABC)
       scheduler.py                   # TaskRegistry, PeriodicTask, TaskScheduler (ABC)
       ratelimit.py                   # RateLimitResult, rate_key, RateLimiter (ABC)
-      container.py                   # Container, build_container(), start/stop
+      container.py                   # Container, build_container(), start_container/stop_container
+      payload.py                     # ensure_json_object: общая проверка JSON-payload событий и задач
       single/                        # ЕДИНСТВЕННОЕ место с apscheduler
         events.py                    # InMemoryEventBus
         scheduler.py                 # InProcessTaskScheduler (APScheduler 3.x)
@@ -251,44 +259,53 @@ backend/
         events.py                    # RedisEventBus
         scheduler.py                 # ArqTaskScheduler
         ratelimit.py                 # RedisRateLimiter
-        worker.py                    # WorkerSettings для arq
+        connection.py                # redis_from_url, arq_redis_from_url, serialize_job/deserialize_job (JSON)
+        worker.py                    # WorkerSettings для arq (ленивый, build_worker_settings)
     api/
-      deps.py                        # get_container, get_settings_dep, get_event_bus, get_scheduler, get_rate_limiter
+      deps.py                        # get_container, get_app_settings, get_event_bus, get_scheduler, get_rate_limiter
       health.py                      # /health, /health/ready
     web/
       spa.py                         # SPAStaticFiles, mount_spa, RESERVED_PREFIXES
     tasks/
       __init__.py                    # registry = TaskRegistry()
   tests/
-    conftest.py                      # settings/app/client фикстуры
-    test_config.py
-    test_container.py
-    test_events.py
-    test_scheduler.py
-    test_ratelimit.py
+    conftest.py                      # settings/app/client/spa_dist фикстуры
+    doubles.py, fake_redis.py        # тестовые двойники (в т. ч. fakeredis для scaled)
+    test_config.py, test_main.py, test_lifespan.py, test_log.py
+    test_container.py, test_interfaces.py
+    test_events.py, test_scheduler.py, test_ratelimit.py   # контракт интерфейсов
+    test_single_mode.py              # реализации single
+    test_scaled_connection.py, test_scaled_events.py, test_scaled_ratelimit.py,
+    test_scaled_scheduler.py, test_scaled_worker.py        # реализации scaled на fakeredis
+    test_scaled_redis.py             # @pytest.mark.scaled, настоящий Redis (REDIS_URL)
     test_health.py
     test_spa.py
     test_import_boundaries.py        # AST: redis/arq/apscheduler только в пакетах реализаций
 
 frontend/
-  package.json                       # scripts: dev, build, lint, typecheck, test
+  package.json                       # scripts: dev, build, preview, lint, typecheck, test, icons; engines node >=22
+  public/icons/                      # PWA-иконки 192/512 (генерация: scripts/generate-icons.mjs)
   package-lock.json                  # генерирует developer (`npm install`), коммитится; CI — `npm ci`
   tsconfig.json, tsconfig.app.json, tsconfig.node.json
   vite.config.ts                     # react, tailwind, PWA (manifest), dev proxy
   eslint.config.js
   index.html
   src/
-    main.tsx, App.tsx                # маршруты /t/:token, /staff, /admin (заглушки)
+    main.tsx, App.tsx                # маршруты /t/:token, /staff, /admin (заглушки, code splitting)
+    pages/                           # GuestPage, StaffPage, AdminPage, NotFoundPage
+    components/PlaceholderPage.tsx
     index.css                        # @import "tailwindcss"
     api/types.ts                     # HealthResponse, ReadinessResponse
-    api/client.ts                    # getHealth()
-    App.test.tsx
+    api/client.ts                    # getHealth(), ApiError
+    App.test.tsx, api/client.test.ts
     test/setup.ts
 
 deploy/
   Dockerfile                         # multi-stage: frontend build → python runtime
-  docker-compose.yml                 # postgres, redis, api, worker, caddy
+  docker-compose.yml                 # postgres, redis, api, worker, caddy; сети backend/edge
   Caddyfile                          # {$PUBLIC_DOMAIN} → reverse_proxy api:8000
+  .env                               # не коммитится: копия .env.example для compose (ADR-6)
+.dockerignore
 ```
 
 ### Команды (для раздела «Команды» в CLAUDE.md — добавляет developer при реализации)
@@ -301,6 +318,8 @@ uv run python -m app                          # single, 127.0.0.1:8000
 # frontend
 cd frontend && npm ci && npm run lint && npm run typecheck && npm run test -- --run && npm run build
 npm run dev                                   # Vite с proxy на backend
-# scaled
-docker compose -f deploy/docker-compose.yml --env-file .env up -d --build
+# scaled (из корня репозитория; cp .env.example deploy/.env и заполнить раздел «Только docker-compose»)
+docker compose -f deploy/docker-compose.yml up -d --build
 ```
+
+> **Пометка doc-sync (2026-10-02, #6).** Раздел приведён в соответствие с реализацией (#37–#45), решения не менялись: `deploy/.env` вместо корневого `.env` для compose; две сети `backend`/`edge` и `--forwarded-allow-ips=${EDGE_SUBNET}`; `/health/ready` реализован в #38; добавлены `core/payload.py`, `core/scaled/connection.py`; тесты scaled — отдельные файлы `test_scaled_*.py`; уточнены сценарии CI и healthcheck-и compose. Решения — `.claude/memory/decisions.md` (DEC-001…DEC-005).

@@ -30,6 +30,25 @@ def _imported_top_modules(path: Path) -> set[str]:
     return found
 
 
+def test_scanner_sees_application_code() -> None:
+    """Защита от «пустого» прохода: обход действительно находит модули app/."""
+    files = {path.relative_to(APP_DIR).as_posix() for path in APP_DIR.rglob("*.py")}
+    assert {"core/container.py", "core/events.py", "main.py"} <= files
+
+
+def test_scanner_detects_all_import_forms(tmp_path: Path) -> None:
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        "import redis.asyncio as r\n"
+        "from arq.connections import RedisSettings\n"
+        "def f():\n"
+        "    import apscheduler\n"
+        "from . import local\n",
+        encoding="utf-8",
+    )
+    assert _imported_top_modules(sample) == {"redis", "arq", "apscheduler"}
+
+
 @pytest.mark.parametrize("module", sorted(RESTRICTED))
 def test_restricted_imports_only_in_implementation_packages(module: str) -> None:
     allowed = RESTRICTED[module]

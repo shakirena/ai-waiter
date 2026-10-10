@@ -12,7 +12,19 @@ export class ApiError extends Error {
   }
 }
 
-export async function getHealth(signal?: AbortSignal): Promise<HealthResponse> {
-  void signal;
-  throw new Error("not implemented");
+async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(path, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, `Запрос ${path} завершился с кодом ${response.status}`);
+  }
+  return (await response.json()) as T;
+}
+
+/** Liveness-проверка backend-а: `GET /health`. */
+export function getHealth(signal?: AbortSignal): Promise<HealthResponse> {
+  return getJson<HealthResponse>("/health", signal);
 }

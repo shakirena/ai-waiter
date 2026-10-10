@@ -1,0 +1,9 @@
+# Одинаковые концы строк на Linux и Windows (ADR-5): ruff format --check и eslint
+# ведут себя одинаково в обеих джобах CI.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+*.jpg binary
+*.webp binary
+*.woff2 binary

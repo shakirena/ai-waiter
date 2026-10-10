@@ -1,0 +1,36 @@
+# Контекст сборки deploy/Dockerfile — корень репозитория. В образ не должны попадать
+# секреты (.env), локальные окружения и артефакты сборки: фронтенд собирается внутри образа.
+.git
+.gitignore
+.gitattributes
+.github
+.claude
+.idea
+.vscode
+docs
+README.md
+CLAUDE.md
+
+# Секреты и локальная конфигурация (в т.ч. deploy/.env)
+**/.env
+**/.env.*
+
+# Python
+**/.venv
+**/venv
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.coverage
+**/htmlcov
+
+# Node
+**/node_modules
+**/dist
+
+# Локальные данные
+**/media
+**/backups
+**/*.sqlite3

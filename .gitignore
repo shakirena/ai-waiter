@@ -29,3 +29,7 @@ backups/
 *.swp
 .DS_Store
 Thumbs.db
+
+# Claude Code (локальное)
+.claude/settings.local.json
+.claude/worktrees/

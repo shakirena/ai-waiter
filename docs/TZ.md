@@ -148,7 +148,7 @@
   "order_id": "5f1c…-uuid",
   "table_external_id": "12",
   "price_tier": "vip",
-  "confirmed_by": {"staff_id": 7, "pos_user_ref": "4"},
+  "confirmed_by": {"staff_id": "0192f3a1-…-uuid", "pos_user_ref": "4"},
   "confirmed_at": "2026-10-01T19:42:10+04:00",
   "items": [
     {"external_id": "157", "qty": "2", "price": "10.00", "comment": "без лука"}

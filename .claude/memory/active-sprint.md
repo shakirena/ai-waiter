@@ -6,7 +6,7 @@
 
 ## Ready for Dev
 
-*(пусто)*
+Задача #7 (модель данных v1): истории #48-#54 в kanban:ready-for-dev (G2 PASS 2026-10-10). Порядок: #48 -> #49 -> #50 -> #51 -> #52 (одна цепочка ревизий Alembic, строго по очереди), затем #53 и #54 параллельно. Начинать с #48. Spec: docs/specs/feature-7-data-model.md; arch: docs/arch/feature-7-data-model.md.
 
 ## In Development (WIP: 0/5)
 

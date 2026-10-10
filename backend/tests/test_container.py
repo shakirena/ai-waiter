@@ -11,11 +11,13 @@ from pathlib import Path
 
 import pytest
 
+import app.core.container as container_module
 from app.core.config import ConfigError, Settings
 from app.core.container import build_container, start_container, stop_container
 from app.core.scheduler import TaskRegistry
-from tests.conftest import make_settings
-from tests.doubles import FakeEventBus, FakeRateLimiter, FakeTaskScheduler, make_fake_container
+from app.db.session import Database
+from tests.conftest import FAKE_DATABASE_URL, make_settings
+from tests.doubles import FakeDatabase, FakeEventBus, FakeRateLimiter, FakeTaskScheduler, make_fake_container
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 SCALED_SETTINGS = {"app_mode": "scaled", "redis_url": "redis://redis:6379/0"}
@@ -104,6 +106,7 @@ def test_lazy_import_in_clean_process(mode_env: dict[str, str], forbidden: tuple
     )
     env = {key: value for key, value in os.environ.items() if key.upper() not in {"APP_MODE", "REDIS_URL"}}
     env.update(mode_env)
+    env["DATABASE_URL"] = FAKE_DATABASE_URL
     env["PYTHONPATH"] = str(BACKEND_DIR)
     result = subprocess.run(  # noqa: S603 — фиксированная команда, без shell
         [sys.executable, "-c", code], cwd=tmp_path, env=env, capture_output=True, text=True, check=False
@@ -117,12 +120,14 @@ async def test_start_and_stop_order(settings: Settings) -> None:
     await start_container(c)
     await stop_container(c)
     assert calls == [
+        "database.start",
         "event_bus.start",
         "rate_limiter.start",
         "scheduler.start",
         "scheduler.stop",
         "rate_limiter.stop",
         "event_bus.stop",
+        "database.stop",
     ]
 
 
@@ -135,7 +140,7 @@ async def test_start_failure_is_logged_and_others_still_start(
     c = make_fake_container(settings, calls, bus=bus)
     with caplog.at_level(logging.ERROR, logger="app.core.container"):
         await start_container(c)
-    assert calls == ["event_bus.start", "rate_limiter.start", "scheduler.start"]
+    assert calls == ["database.start", "event_bus.start", "rate_limiter.start", "scheduler.start"]
     assert [getattr(r, "component", None) for r in caplog.records] == ["event_bus"]
 
 
@@ -148,8 +153,30 @@ async def test_stop_failure_does_not_prevent_stopping_others(
     c = make_fake_container(settings, calls, scheduler=scheduler, rate_limiter=limiter)
     with caplog.at_level(logging.ERROR, logger="app.core.container"):
         await stop_container(c)
-    assert calls == ["scheduler.stop", "rate_limiter.stop", "event_bus.stop"]
+    assert calls == ["scheduler.stop", "rate_limiter.stop", "event_bus.stop", "database.stop"]
     assert [getattr(r, "component", None) for r in caplog.records] == ["scheduler", "rate_limiter"]
+
+
+async def test_database_stop_failure_is_logged(settings: Settings, caplog: pytest.LogCaptureFixture) -> None:
+    calls: list[str] = []
+    database = FakeDatabase(calls, stop_error=OSError("closed"))
+    c = make_fake_container(settings, calls, database=database)
+    with caplog.at_level(logging.ERROR, logger="app.core.container"):
+        await stop_container(c)
+    assert calls[-1] == "database.stop"
+    assert [getattr(r, "component", None) for r in caplog.records] == ["database"]
+
+
+@pytest.mark.parametrize("overrides", [{}, SCALED_SETTINGS])
+def test_build_container_creates_lazy_database_in_both_modes(
+    overrides: dict[str, str], registry: TaskRegistry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-7.9: Database одинаков в обоих режимах и при сборке не создаёт движок (нет сети)."""
+    monkeypatch.setattr(container_module, "Database", Database)
+    settings = make_settings(**overrides)
+    c = build_container(settings, registry)
+    assert type(c.database) is Database
+    assert c.database._engine is None
 
 
 def test_container_is_immutable(settings: Settings) -> None:

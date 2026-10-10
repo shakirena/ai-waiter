@@ -8,8 +8,13 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "pydantic>=2.7",
     "pydantic-settings>=2.4",
-    # sqlalchemy[asyncio], asyncpg, alembic — добавляются в #7 (ADR-5: драйвер asyncpg)
     "apscheduler>=3.10,<4",
+    # PostgreSQL (#7, ADR-7.9): драйвер asyncpg (ADR-5), миграции Alembic.
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    # База часовых поясов для zoneinfo: на Windows системной нет (ADR-7.13).
+    "tzdata",
 ]
 
 [project.optional-dependencies]
@@ -58,6 +63,10 @@ select = [
 ]
 # Тексты и docstring-и на русском: кириллица не должна считаться «похожими на латиницу» символами.
 ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.isort]
+# Каталог миграций backend/alembic/ не пакет приложения: alembic — сторонняя библиотека.
+known-third-party = ["alembic"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "redis".msg = "Redis только в app/core/scaled/ — используйте EventBus/TaskScheduler/RateLimiter (ADR-1)"

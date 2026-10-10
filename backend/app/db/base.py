@@ -5,14 +5,6 @@
 63 байта; длинные имена SQLAlchemy усекает с хеш-суффиксом, частичные индексы получают
 явное ``name=``.
 
-Реализация (developer, после добавления sqlalchemy в зависимости)::
-
-    from sqlalchemy import MetaData
-    from sqlalchemy.orm import DeclarativeBase
-
-    class Base(DeclarativeBase):
-        metadata = MetaData(naming_convention=NAMING_CONVENTION)
-
 ``alembic/env.py`` берёт ``target_metadata = Base.metadata`` после ``import app.models``
 (пакет моделей импортирует все модули, чтобы таблицы попали в metadata).
 """
@@ -20,6 +12,9 @@
 from __future__ import annotations
 
 from typing import Final
+
+from sqlalchemy import MetaData, Numeric
+from sqlalchemy.orm import DeclarativeBase
 
 # ck: в CheckConstraint задаётся короткое name="status" → ck_orders_status.
 NAMING_CONVENTION: Final[dict[str, str]] = {
@@ -29,3 +24,13 @@ NAMING_CONVENTION: Final[dict[str, str]] = {
     "ix": "ix_%(table_name)s_%(column_0_N_name)s",
     "ck": "ck_%(table_name)s_%(constraint_name)s",
 }
+
+# Тип денежных колонок (ADR-7.4): NUMERIC(10,2) в БД, Decimal в коде. Исключение —
+# стоимость вызова ИИ (messages.cost_usd, NUMERIC(12,6)), она задаётся в своей модели.
+Money: Final = Numeric(10, 2, asdecimal=True)
+
+
+class Base(DeclarativeBase):
+    """База всех ORM-моделей; одна ``MetaData`` с ``NAMING_CONVENTION``."""
+
+    metadata = MetaData(naming_convention=NAMING_CONVENTION)

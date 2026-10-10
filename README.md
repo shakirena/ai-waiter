@@ -104,7 +104,7 @@ cd ai-waiter
 
 ### 3. Создать `.env`
 
-Все переменные окружения перечислены в [.env.example](.env.example). Для локального запуска достаточно скопировать его без изменений в корень репозитория:
+Все переменные окружения перечислены в [.env.example](.env.example). Скопируйте его в корень репозитория и впишите в `DATABASE_URL` пароль роли PostgreSQL (шаг 5); остальное для локального запуска можно не менять:
 
 ```powershell
 # Windows (PowerShell)
@@ -128,7 +128,51 @@ cd ..
 
 `uv sync` создаёт `backend/.venv` и ставит зависимости строго по `uv.lock`, включая инструменты разработки (pytest, ruff). Для запуска этого достаточно; для тестов нужен `uv sync --extra scaled` (см. «Проверки»).
 
-### 5. Собрать frontend
+### 5. База данных
+
+Нужен PostgreSQL 16. На Windows достаточно установщика PostgreSQL (служба Windows, Docker не нужен), на Linux — пакета дистрибутива. Расширения и права суперпользователя приложению не нужны: роль `ai_waiter` — владелец своих баз.
+
+Создайте роль и две базы: рабочую `ai_waiter` и тестовую `ai_waiter_test` (имя тестовой базы обязано оканчиваться на `_test`, тесты пересоздают в ней схему `public`). Кодировка — `UTF8`, локаль — `C`, шаблон — `template0`: установщик Windows может предложить `WIN1251` и локаль Windows, а дамп с такой локалью не восстановится на Linux. Команды выполняются от имени администратора PostgreSQL (обычно `postgres`); пароль придумайте сами и не коммитьте:
+
+```powershell
+# Windows (PowerShell): psql лежит в каталоге bin установленного PostgreSQL
+& "C:\Program Files\PostgreSQL\16\bin\psql.exe" -U postgres -h localhost
+```
+
+```bash
+# Linux
+sudo -u postgres psql
+```
+
+```sql
+CREATE ROLE ai_waiter LOGIN PASSWORD '<пароль>';
+CREATE DATABASE ai_waiter OWNER ai_waiter ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0;
+CREATE DATABASE ai_waiter_test OWNER ai_waiter ENCODING 'UTF8' LOCALE 'C' TEMPLATE template0;
+```
+
+В `.env` (корень репозитория):
+
+```dotenv
+DATABASE_URL=postgresql+asyncpg://ai_waiter:<пароль>@localhost:5432/ai_waiter
+# только для тестов с PostgreSQL (pytest -m db); никогда не указывайте здесь рабочую базу
+TEST_DATABASE_URL=postgresql+asyncpg://ai_waiter:<пароль>@localhost:5432/ai_waiter_test
+```
+
+Пароль в URL — только из символов, допустимых в URL (буквы, цифры, `-`, `_`, `.`), иначе его нужно URL-кодировать. Без `DATABASE_URL` приложение не запускается и называет переменную; недоступная база запуск не останавливает — о ней сообщает `/health/ready`.
+
+Схему создают миграции Alembic (из каталога `backend/`; приложение при старте миграции не запускает):
+
+```bash
+cd backend
+uv run alembic upgrade head      # применить все миграции
+uv run alembic current           # текущая ревизия
+uv run alembic downgrade -1      # откатить последнюю (только для разработки)
+cd ..
+```
+
+Миграции применяются к базе из `DATABASE_URL`. Чтобы применить их к другой базе, задайте `DATABASE_URL` в окружении процесса — она важнее `.env`.
+
+### 6. Собрать frontend
 
 ```bash
 cd frontend
@@ -139,7 +183,7 @@ cd ..
 
 Сборка попадает в `frontend/dist`, backend раздаёт её сам (`SERVE_FRONTEND=true`). Если `frontend/dist` нет, backend всё равно запускается, но вместо страниц будет 404, а в лог попадёт предупреждение.
 
-### 6. Запустить backend
+### 7. Запустить backend
 
 ```bash
 cd backend
@@ -148,7 +192,7 @@ uv run python -m app
 
 Процесс слушает `http://127.0.0.1:8000` (в режиме `single` допустим только loopback-адрес). Остановка — `Ctrl+C`.
 
-### 7. Проверить
+### 8. Проверить
 
 ```bash
 curl http://127.0.0.1:8000/health
@@ -168,7 +212,7 @@ curl http://127.0.0.1:8000/health/ready
 
 ### Режим разработки frontend
 
-Для работы над интерфейсом с горячей перезагрузкой запустите backend (шаг 6) и в другом терминале:
+Для работы над интерфейсом с горячей перезагрузкой запустите backend (шаг 7) и в другом терминале:
 
 ```bash
 cd frontend
@@ -215,7 +259,7 @@ Vite открывается на http://localhost:5173 (если порт зан
    curl https://menu.example.com/health/ready         # {"status":"ready","checks":{"redis":"ok"}}
    ```
 
-Ограничение: при разработке каркаса compose-файл проверялся только командой `docker compose config`; сборка образа и запуск на настоящем Docker не проверялись. Миграции Alembic появятся вместе с моделью данных (#7). Установка режима `single` как службы Windows — отдельная задача.
+Ограничение: при разработке каркаса compose-файл проверялся только командой `docker compose config`; сборка образа и запуск на настоящем Docker не проверялись. Сервис `migrate` (применение миграций Alembic при развёртывании) в compose ещё не добавлен — он появится в рамках модели данных (#7). Установка режима `single` как службы Windows — отдельная задача.
 
 ## Проверки
 
@@ -244,7 +288,8 @@ npm run build
 
 - Unit-тесты не требуют внешних сервисов: реализации `scaled` проверяются на fakeredis.
 - `db` — тесты с настоящим PostgreSQL, `scaled` — с настоящим Redis. В CI они выполняются только в Linux-джобе `backend-services` (`uv run pytest -q -m "db or scaled"`), а на обеих ОС — `uv run pytest -q -m "not db and not scaled"`.
-- Локально `uv run pytest -q` запускает всё; тесты с настоящим Redis пропускаются (skipped), если не задан `REDIS_URL`.
+- Локально `uv run pytest -q` запускает всё; тесты с настоящим Redis пропускаются (skipped), если не задан `REDIS_URL`, а тесты с PostgreSQL — если не задан `TEST_DATABASE_URL`.
+- Тесты с PostgreSQL: `uv run pytest -q -m db`. Они подключаются только к `TEST_DATABASE_URL` (окружение или корневой `.env`, шаг 5), никогда к `DATABASE_URL`; имя базы обязано оканчиваться на `_test`, иначе прогон прерывается. Схема `public` тестовой базы пересоздаётся и заполняется миграциями (`alembic upgrade head`) один раз за прогон, каждый тест работает в транзакции, которая откатывается. На Windows хватает PostgreSQL-службы, Docker не нужен. В CI (`CI=true`) отсутствие `TEST_DATABASE_URL` — ошибка, а не пропуск.
 - Покрытие: backend — `uv run pytest -q --cov=app --cov-report=term-missing`, frontend — `npm run test -- --run --coverage` (отчёт по `src/`). Цель — не ниже 95% по новому коду.
 
 ## Конфигурация

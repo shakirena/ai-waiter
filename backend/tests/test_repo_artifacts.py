@@ -126,6 +126,15 @@ def test_ci_has_services_job_for_db_and_scaled_markers(ci: dict[str, Any]) -> No
     assert 'pytest -q -m "db or scaled"' in _ci_commands(job)
 
 
+def test_ci_services_job_uses_dedicated_test_database(ci: dict[str, Any]) -> None:
+    """#48, ADR-7.11: БД сервис-контейнера *_test, db-тесты через TEST_DATABASE_URL, пустой набор — ошибка."""
+    job = ci["jobs"]["backend-services"]
+    assert job["services"]["postgres"]["env"]["POSTGRES_DB"] == "ai_waiter_test"
+    assert job["env"]["TEST_DATABASE_URL"].endswith("/ai_waiter_test")
+    assert job["env"]["DATABASE_URL"].startswith("postgresql+asyncpg://")
+    assert "code=$?" not in _ci_commands(job)
+
+
 def test_ci_does_not_swallow_failures(ci: dict[str, Any]) -> None:
     """Ни один шаг не использует continue-on-error: падение любого шага делает проверку красной."""
     for job in ci["jobs"].values():

@@ -83,10 +83,12 @@ jobs:
           # Учётные данные одноразовой БД сервис-контейнера CI, не секрет.
           POSTGRES_USER: ci
           POSTGRES_PASSWORD: ci
-          POSTGRES_DB: ci
+          # Имя оканчивается на _test: db-фикстуры работают только с такой БД (ADR-7.11).
+          # Образ создаёт БД в UTF8, как требует ADR-7.13.
+          POSTGRES_DB: ai_waiter_test
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U ci -d ci"
+          --health-cmd "pg_isready -U ci -d ai_waiter_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -100,7 +102,10 @@ jobs:
           --health-retries 10
     env:
       # localhost — адрес сервис-контейнеров на раннере GitHub Actions, не сеть заведения.
-      DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci
+      # db-тесты подключаются только через TEST_DATABASE_URL; DATABASE_URL (обязательная настройка
+      # приложения) указывает на ту же одноразовую БД.
+      TEST_DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ai_waiter_test
+      DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ai_waiter_test
       REDIS_URL: redis://localhost:6379/0
     defaults:
       run:
@@ -122,21 +127,11 @@ jobs:
       - name: Установить зависимости (uv.lock, extra scaled)
         run: uv sync --frozen --extra scaled
 
-      # До #7 (БД) и интеграционных тестов scaled набор пуст: pytest завершается с кодом 5
-      # («тесты не выбраны»). Только этот код считается успехом, и он виден как notice;
-      # любые другие ненулевые коды (1 — упавшие тесты, 2 — ошибка сбора, 3 — внутренняя
-      # ошибка, 4 — ошибка аргументов) проходят как есть и делают проверку красной.
+      # С #7 (#48) db-тесты есть, поэтому обход кода 5 («тесты не выбраны») убран: пустой набор
+      # теперь ошибка. Схему БД создают сами тесты миграциями (alembic upgrade head); без
+      # TEST_DATABASE_URL при CI=true db-тесты падают, а не пропускаются.
       - name: Тесты pytest с PostgreSQL и Redis (маркеры db, scaled)
-        run: |
-          set +e
-          uv run pytest -q -m "db or scaled"
-          code=$?
-          set -e
-          if [ "$code" -eq 5 ]; then
-            echo "::notice title=pytest db/scaled::Тестов с маркерами db/scaled пока нет (код 5) — шаг пропущен"
-            exit 0
-          fi
-          exit "$code"
+        run: uv run pytest -q -m "db or scaled"
 
   frontend:
     name: frontend (${{ matrix.os }})

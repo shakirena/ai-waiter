@@ -211,7 +211,12 @@ def test_import_has_no_side_effects() -> None:
     result = subprocess.run(  # noqa: S603 — фиксированная команда текущего интерпретатора
         [sys.executable, "-c", code],
         cwd=BACKEND_DIR / "tests",  # каталог без .env
-        env={**env, "PYTHONPATH": str(BACKEND_DIR), "PYTHONIOENCODING": "utf-8"},
+        env={
+            **env,
+            "DATABASE_URL": "postgresql+asyncpg://test:test@db.invalid/test",
+            "PYTHONPATH": str(BACKEND_DIR),
+            "PYTHONIOENCODING": "utf-8",
+        },
         capture_output=True,
         text=True,
         encoding="utf-8",

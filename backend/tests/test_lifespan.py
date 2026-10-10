@@ -16,9 +16,10 @@ from app.core.container import Container
 from app.core.events import EventBus
 from app.core.ratelimit import RateLimiter
 from app.core.scheduler import TaskRegistry, TaskScheduler
+from app.db.session import Database
 from app.main import create_app
 from tests.conftest import make_settings
-from tests.doubles import FakeEventBus, make_fake_container
+from tests.doubles import FakeDatabase, FakeEventBus, make_fake_container
 
 
 async def test_lifespan_builds_starts_and_stops_container(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -36,9 +37,9 @@ async def test_lifespan_builds_starts_and_stops_container(monkeypatch: pytest.Mo
     application = create_app(settings, registry=registry)
     async with application.router.lifespan_context(application):
         assert application.state.container is container
-        assert calls == ["event_bus.start", "rate_limiter.start", "scheduler.start"]
+        assert calls == ["database.start", "event_bus.start", "rate_limiter.start", "scheduler.start"]
     assert built == [(settings, registry)]
-    assert calls[3:] == ["scheduler.stop", "rate_limiter.stop", "event_bus.stop"]
+    assert calls[4:] == ["scheduler.stop", "rate_limiter.stop", "event_bus.stop", "database.stop"]
 
 
 async def test_lifespan_unknown_mode_fails_startup() -> None:
@@ -72,9 +73,11 @@ def _probe_app(container: Container) -> FastAPI:
         bus: Annotated[EventBus, Depends(deps.get_event_bus)],
         scheduler: Annotated[TaskScheduler, Depends(deps.get_scheduler)],
         limiter: Annotated[RateLimiter, Depends(deps.get_rate_limiter)],
+        database: Annotated[Database, Depends(deps.get_database)],
     ) -> dict[str, bool]:
         return {
             "container": c is container,
+            "database": database is container.database,
             "settings": settings is container.settings,
             "bus": bus is container.event_bus,
             "scheduler": scheduler is container.scheduler,
@@ -90,6 +93,22 @@ async def test_deps_return_container_components() -> None:
         r = await ac.get("/probe")
     assert r.status_code == 200
     assert all(r.json().values()), r.json()
+
+
+async def test_session_dep_opens_and_closes_session_without_commit() -> None:
+    """SessionDep (ADR-7.9): одна сессия на запрос, закрывается после ответа, автокоммита нет."""
+    database = FakeDatabase()
+    application = _probe_app(make_fake_container(make_settings(), database=database))
+
+    @application.get("/session")
+    async def session_probe(session: deps.SessionDep) -> dict[str, bool]:
+        return {"open": not session.closed}  # type: ignore[attr-defined]
+
+    async with AsyncClient(transport=ASGITransport(app=application), base_url="http://testserver") as ac:
+        r = await ac.get("/session")
+    assert r.json() == {"open": True}
+    assert len(database.sessions) == 1
+    assert database.sessions[0].closed is True
 
 
 async def test_get_container_before_lifespan_is_error() -> None:

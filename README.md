@@ -198,10 +198,12 @@ uv run python -m app
 curl http://127.0.0.1:8000/health
 # {"status":"ok","mode":"single","version":"0.1.0"}
 curl http://127.0.0.1:8000/health/ready
-# {"status":"ready","checks":{"redis":"skipped"}}
+# {"status":"ready","checks":{"database":"ok","redis":"skipped"}}
 ```
 
 В PowerShell используйте `curl.exe` (без `.exe` вызывается `Invoke-WebRequest`) или просто откройте адрес в браузере.
+
+`/health` (liveness) к базе не обращается. `/health/ready` выполняет `SELECT 1` (таймаут 2 с): если PostgreSQL недоступен, ответ — `503` и `"database":"fail"`; причина (без пароля) записывается в лог процесса, в ответ не попадает.
 
 Откройте в браузере:
 
@@ -256,7 +258,7 @@ Vite открывается на http://localhost:5173 (если порт зан
    ```bash
    docker compose -f deploy/docker-compose.yml ps     # все сервисы healthy
    curl https://menu.example.com/health               # {"status":"ok","mode":"scaled",...}
-   curl https://menu.example.com/health/ready         # {"status":"ready","checks":{"redis":"ok"}}
+   curl https://menu.example.com/health/ready         # {"status":"ready","checks":{"database":"ok","redis":"ok"}}
    ```
 
 Ограничение: при разработке каркаса compose-файл проверялся только командой `docker compose config`; сборка образа и запуск на настоящем Docker не проверялись. Сервис `migrate` (применение миграций Alembic при развёртывании) в compose ещё не добавлен — он появится в рамках модели данных (#7). Установка режима `single` как службы Windows — отдельная задача.

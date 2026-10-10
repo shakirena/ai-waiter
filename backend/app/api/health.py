@@ -1,7 +1,7 @@
 """/health (liveness) и /health/ready (readiness). Без авторизации, без внутренних деталей.
 
 Тело ответа не содержит текстов исключений, строк подключения и хостов — детали только в лог.
-Проверка ``database`` (``SELECT 1``) добавляется в #7.
+Проверка ``database`` (``SELECT 1`` через ``Database.ping``, #56, ADR-7.9) — в обоих режимах.
 """
 
 from __future__ import annotations
@@ -52,15 +52,21 @@ async def health(settings: Annotated[Settings, Depends(get_app_settings)]) -> He
     responses={status.HTTP_503_SERVICE_UNAVAILABLE: {"model": ReadinessResponse}},
 )
 async def ready(container: Annotated[Container, Depends(get_container)], response: Response) -> ReadinessResponse:
-    """Readiness: в scaled — ``ping()`` шины и rate-limiter-а (Redis), в single — ``"skipped"``.
+    """Readiness: ``database`` — ``SELECT 1`` в обоих режимах; ``redis`` — в scaled ``ping()`` шины
+    и rate-limiter-а, в single — ``"skipped"``. Проверки идут параллельно, каждая с таймаутом 2 с.
     Хотя бы одна проверка ``"fail"`` → 503."""
-    checks: dict[Literal["database", "redis"], CheckStatus] = {}
-    if container.settings.app_mode == AppMode.SCALED:
-        results = await asyncio.gather(
+    scaled = container.settings.app_mode == AppMode.SCALED
+    pings: list[Awaitable[bool]] = [_check("database", container.database.ping)]
+    if scaled:
+        pings += [
             _check("event_bus", container.event_bus.ping),
             _check("rate_limiter", container.rate_limiter.ping),
-        )
-        checks["redis"] = "ok" if all(results) else "fail"
+        ]
+    database_ok, *redis_results = await asyncio.gather(*pings)
+
+    checks: dict[Literal["database", "redis"], CheckStatus] = {"database": "ok" if database_ok else "fail"}
+    if scaled:
+        checks["redis"] = "ok" if all(redis_results) else "fail"
     else:
         checks["redis"] = "skipped"
 

@@ -29,3 +29,6 @@
 - Команды Alembic и пересоздание схемы в фикстурах выполняются в отдельном потоке (`run_in_thread`).
 
 **Build:** ruff OK · ruff format OK · pytest -m "not db and not scaled" 491 passed · pytest -m db 9 passed (локальная ai_waiter_test)
+
+## 🔒 Security
+Verdict: PASS. Файлы: alembic/env.py, app/db/session.py, config.py, tests/db/conftest.py, ci.yml, .env.example. Findings: CRITICAL 0, HIGH 0, LOW 2 (защита _test не проверяет хост; нет проверки TEST_DATABASE_URL != DATABASE_URL).

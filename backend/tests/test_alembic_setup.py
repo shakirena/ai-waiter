@@ -84,3 +84,8 @@ def test_revision_template_renders_formatted_code(tmp_path: Path) -> None:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_alembic_ini_is_ascii() -> None:
+    """Alembic читает ini в кодировке локали (cp1252 на Windows CI): кириллица ломает чтение."""
+    INI.read_bytes().decode("ascii")

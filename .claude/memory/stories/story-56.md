@@ -21,3 +21,6 @@
 - `/health` (liveness) к БД не обращается.
 
 **Build:** ruff OK · ruff format OK · pytest -m "not db and not scaled" 498 passed · pytest -m db 11 passed (локальная ai_waiter_test)
+
+## 🔒 Security
+Verdict: PASS. Файлы: app/api/health.py, Database.ping. Findings: CRITICAL 0, HIGH 0, LOW 1 (публичный эндпоинт открывает соединение с БД — rate-limit на прокси).

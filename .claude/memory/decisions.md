@@ -47,3 +47,24 @@
 **Reason:** AC-7, ADR-6, раздел Security arch doc: наружу только caddy, адрес клиента нельзя подделать из внутренних контейнеров.
 **Applies to:** #43, #45 (README), #7 (migrate), #32, #36.
 **Revisit when:** переход на оркестратор или внешний балансировщик перед caddy.
+
+## DEC-006: Ключи UUIDv7 и мультиарендность составными FK
+
+**Decision:** Все PK — `uuid`, значение UUIDv7 из `app.db.ids.new_id()` (запасной `server_default gen_random_uuid()`); `tenant_id uuid NOT NULL` во всех таблицах заведения; у родителей `UNIQUE (tenant_id, id)`, ссылки внутри заведения — составные FK `(tenant_id, x_id)`; бизнес-уникальности — `(tenant_id, …)`, глобально уникален только `tables.qr_token`. Ссылки на персонал (`*_staff_id`) — uuid; FK на `staff_users` добавляет #19. Статусы — `text` + `CHECK`, значения из `app/models/enums.py`. Имена ограничений — `NAMING_CONVENTION` из `app/db/base.py`.
+**Reason:** docs/arch/feature-7-data-model.md ADR-7.1–7.3, 7.7, 7.8: order_id Integration API — UUID; гостю не видны перебираемые ID; слияние БД пилота с VPS; БД сама отвергает межарендные ссылки; RLS подключается без изменения таблиц.
+**Applies to:** #8–#36, все stories с новыми таблицами (#16 connectors, #19 staff_users, #22 waiter_calls, #25 reviews).
+**Revisit when:** включение RLS на этапе SaaS (#36) — отдельный ADR.
+
+## DEC-007: Сессии БД и транзакции
+
+**Decision:** `Container.database: Database` (lazy async engine asyncpg, `expire_on_commit=False`); в эндпоинтах — `SessionDep` из `app/api/deps.py`; commit — явно в сервисе (заказ коммитится до любых вызовов ИИ и уведомлений, NFR-3), без автокоммита в зависимости. Миграции не запускаются при старте приложения: `alembic upgrade head` (scaled — сервис `migrate` в compose, single — шаг установки службы #30). Деньги — `NUMERIC(10,2)`/`Decimal`; исключение — стоимость ИИ `NUMERIC(12,6)`.
+**Reason:** ADR-7.4, 7.9, 7.10.
+**Applies to:** все backend-stories с БД; #23 (фоновые задачи берут Database из Container), #30, #36.
+**Revisit when:** —
+
+## DEC-008: Тесты с PostgreSQL
+
+**Decision:** db-тесты — `backend/tests/db/`, маркер `db`, подключение только из `TEST_DATABASE_URL` (имя БД оканчивается на `_test`); нет переменной — skip локально, ошибка при `CI=true`. Схема — `alembic upgrade head` один раз за сессию (синхронная фикстура), изоляция — транзакция + `join_transaction_mode="create_savepoint"` с откатом. Инварианты metadata и офлайн-SQL миграций — unit-тесты без БД (идут и на Windows).
+**Reason:** ADR-7.11; Windows-джоб CI без PostgreSQL.
+**Applies to:** все stories с db-тестами.
+**Revisit when:** параллельный запуск тестов (pytest-xdist) — нужна БД на воркер.

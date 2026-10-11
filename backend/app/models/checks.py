@@ -43,6 +43,11 @@ def sql_match(column: str, pattern: str) -> str:
     return f"{_column(column)} ~ {_literal(pattern)}"
 
 
+def sql_not_match(column: str, pattern: str) -> str:
+    """``column !~ 'pattern'``."""
+    return f"{_column(column)} !~ {_literal(pattern)}"
+
+
 def sql_length(column: str, max_length: int, min_length: int | None = None) -> str:
     """``char_length(column) BETWEEN min AND max`` или ``char_length(column) <= max``.
 

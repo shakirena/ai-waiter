@@ -21,7 +21,7 @@ from sqlalchemy import Connection, text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.models.enums import TableType
+from app.models.enums import TableType, WeightUnit
 from tests.db.conftest import BACKEND_DIR, alembic_command, run_in_thread
 
 pytestmark = pytest.mark.db
@@ -29,6 +29,7 @@ pytestmark = pytest.mark.db
 # Таблицы, которые создаёт ревизия (ADR-7.10).
 REVISION_TABLES: dict[str, set[str]] = {
     "0001": {"tenants", "halls", "tables"},
+    "0002": {"categories", "menu_items", "menu_item_prices", "menu_item_meta", "allergens", "menu_item_allergens"},
 }
 
 
@@ -85,6 +86,7 @@ def test_downgrade_one_step_drops_only_revision_tables(restore_head: str, revisi
 # CHECK вида «колонка IN (...)» и перечисление, из которого он построен.
 ENUM_CHECKS: dict[str, type[StrEnum]] = {
     "ck_tables_type": TableType,
+    "ck_menu_item_meta_weight_unit": WeightUnit,
 }
 
 

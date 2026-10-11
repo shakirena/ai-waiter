@@ -68,3 +68,10 @@
 **Reason:** ADR-7.11; Windows-джоб CI без PostgreSQL.
 **Applies to:** все stories с db-тестами.
 **Revisit when:** параллельный запуск тестов (pytest-xdist) — нужна БД на воркер.
+
+## DEC-009: CHECK из кода и шаблон тестов модели данных
+
+**Decision:** Текст CHECK строится только построителями `app/models/checks.py` (`sql_in`, `sql_match`, `sql_not_match`, `sql_length`, `sql_between`, `sql_text_array`) из перечислений и шаблонов `app/models/enums.py`; короткое имя CHECK = имя колонки (`ck_<table>_<column>`), составные — по смыслу (`ck_menu_item_meta_weight`). Новая таблица/ревизия обязана дополнить: `EXPECTED_TABLES`, `EXPECTED_CHECKS`, `NUMERIC_EXCEPTIONS` в `tests/test_models_metadata.py`; `REVISION_TABLES` в `tests/test_migrations_offline.py` и `tests/db/test_migrations.py`; `ENUM_CHECKS` (CHECK «IN» ↔ перечисление) в `tests/db/test_migrations.py`; межарендные FK — в `tests/db/test_tenant_isolation.py`. db-тесты ограничений — через `tests/db/factories.py:expect_violation` (SAVEPOINT + имя нарушенного ограничения). Ревизия — autogenerate с ручной проверкой, комментарии autogenerate удаляются, docstring на русском. Колонки в DDL: `id`, `tenant_id`, …, `created_at`, `updated_at` (`sort_order` в миксинах); `sort_key` — `TEXT COLLATE "C"`.
+**Reason:** ADR-7.2, 7.3, 7.8, 7.13: alembic check не сравнивает CHECK; одинаковые проверки для всех ревизий 0001–0004.
+**Applies to:** #51, #52, #53, #54 и будущие таблицы (#16, #19, #22, #25).
+**Revisit when:** —

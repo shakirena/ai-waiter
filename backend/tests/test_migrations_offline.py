@@ -24,6 +24,7 @@ VERSIONS_DIR = BACKEND_DIR / "alembic" / "versions"
 # Ревизии по порядку и таблицы, которые создаёт каждая (ADR-7.10).
 REVISION_TABLES: dict[str, set[str]] = {
     "0001": {"tenants", "halls", "tables"},
+    "0002": {"categories", "menu_items", "menu_item_prices", "menu_item_meta", "allergens", "menu_item_allergens"},
 }
 
 

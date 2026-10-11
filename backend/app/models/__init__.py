@@ -14,6 +14,6 @@
 содержала все таблицы (модули добавляются вместе со своей ревизией Alembic).
 """
 
-from app.models import tenant
+from app.models import menu, tenant
 
-__all__ = ["tenant"]
+__all__ = ["menu", "tenant"]

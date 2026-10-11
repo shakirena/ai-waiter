@@ -16,6 +16,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.menu import Allergen, Category, MenuItem
 from app.models.tenant import Hall, Table, Tenant
 
 
@@ -70,3 +71,31 @@ def build_table(tenant_id: uuid.UUID, **values: Any) -> Table:
 
 async def create_table(session: AsyncSession, tenant_id: uuid.UUID, **values: Any) -> Table:
     return await add(session, build_table(tenant_id, **values))
+
+
+async def create_category(session: AsyncSession, tenant_id: uuid.UUID, **values: Any) -> Category:
+    values.setdefault("external_id", f"c{secrets.token_hex(4)}")
+    values.setdefault("pos_name", "Горячие блюда")
+    return await add(session, Category(tenant_id=tenant_id, **values))
+
+
+def build_menu_item(tenant_id: uuid.UUID, category_id: uuid.UUID, **values: Any) -> MenuItem:
+    values.setdefault("external_id", f"m{secrets.token_hex(4)}")
+    values.setdefault("pos_name", "Плов")
+    values.setdefault("currency", "AZN")
+    return MenuItem(tenant_id=tenant_id, category_id=category_id, **values)
+
+
+async def create_menu_item(
+    session: AsyncSession, tenant_id: uuid.UUID, category_id: uuid.UUID | None = None, **values: Any
+) -> MenuItem:
+    if category_id is None:
+        category_id = (await create_category(session, tenant_id)).id
+    return await add(session, build_menu_item(tenant_id, category_id, **values))
+
+
+async def create_allergen(session: AsyncSession, tenant_id: uuid.UUID, **values: Any) -> Allergen:
+    values.setdefault("code", "gluten")
+    values.setdefault("name_az", "Qlüten")
+    values.setdefault("name_ru", "Глютен")
+    return await add(session, Allergen(tenant_id=tenant_id, **values))

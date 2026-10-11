@@ -4,14 +4,22 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.menu import MenuItemAllergen, MenuItemMeta, MenuItemPrice
 from app.models.tenant import Table
 from tests.db.factories import (
+    add,
+    build_menu_item,
     build_table,
+    create_allergen,
+    create_category,
     create_hall,
+    create_menu_item,
     create_table,
     create_tenant,
     expect_insert_violation,
@@ -63,3 +71,69 @@ async def test_changing_tenant_of_table_in_hall_rejected(db_session: AsyncSessio
         await db_session.execute(update(Table).where(Table.id == table.id).values(tenant_id=other.id))
 
     await expect_violation(db_session, "fk_tables_tenant_id_hall_id_halls", move)
+
+
+# ------------------------------------------------------------ меню (#50)
+
+
+async def test_menu_item_cannot_reference_category_of_other_tenant(db_session: AsyncSession) -> None:
+    """AC-3: ссылка на категорию другого заведения отклоняется составным FK."""
+    own = await create_tenant(db_session)
+    other = await create_tenant(db_session)
+    foreign_category = await create_category(db_session, other.id)
+    await expect_insert_violation(
+        db_session,
+        "fk_menu_items_tenant_id_category_id_categories",
+        build_menu_item(own.id, foreign_category.id),
+    )
+
+
+@pytest.mark.parametrize(
+    ("model", "values", "constraint"),
+    [
+        (
+            MenuItemPrice,
+            {"price_tier": "default", "price": Decimal("1.00")},
+            "fk_menu_item_prices_tenant_id_menu_item_id_menu_items",
+        ),
+        (MenuItemMeta, {}, "fk_menu_item_meta_tenant_id_menu_item_id_menu_items"),
+    ],
+    ids=["price", "meta"],
+)
+async def test_price_and_meta_cannot_reference_menu_item_of_other_tenant(
+    db_session: AsyncSession, model: type, values: dict[str, object], constraint: str
+) -> None:
+    own = await create_tenant(db_session)
+    other = await create_tenant(db_session)
+    foreign_item = await create_menu_item(db_session, other.id)
+    await expect_insert_violation(
+        db_session, constraint, model(tenant_id=own.id, menu_item_id=foreign_item.id, **values)
+    )
+
+
+async def test_menu_item_cannot_get_allergen_of_other_tenant(db_session: AsyncSession) -> None:
+    """AC-3: аллерген другого заведения привязать нельзя."""
+    own = await create_tenant(db_session)
+    other = await create_tenant(db_session)
+    item = await create_menu_item(db_session, own.id)
+    foreign_allergen = await create_allergen(db_session, other.id)
+    await expect_insert_violation(
+        db_session,
+        "fk_menu_item_allergens_tenant_id_allergen_id_allergens",
+        MenuItemAllergen(tenant_id=own.id, menu_item_id=item.id, allergen_id=foreign_allergen.id),
+    )
+    own_allergen = await create_allergen(db_session, own.id)
+    link = await add(db_session, MenuItemAllergen(tenant_id=own.id, menu_item_id=item.id, allergen_id=own_allergen.id))
+    assert link.created_at.tzinfo is not None
+
+
+async def test_allergen_link_cannot_reference_menu_item_of_other_tenant(db_session: AsyncSession) -> None:
+    own = await create_tenant(db_session)
+    other = await create_tenant(db_session)
+    foreign_item = await create_menu_item(db_session, other.id)
+    allergen = await create_allergen(db_session, own.id)
+    await expect_insert_violation(
+        db_session,
+        "fk_menu_item_allergens_tenant_id_menu_item_id_menu_items",
+        MenuItemAllergen(tenant_id=own.id, menu_item_id=foreign_item.id, allergen_id=allergen.id),
+    )

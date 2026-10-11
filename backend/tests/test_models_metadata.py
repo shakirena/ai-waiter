@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+import re
+import uuid
+
 import pytest
 from sqlalchemy import (
     CheckConstraint,
@@ -21,31 +24,67 @@ from sqlalchemy import (
 
 import app.models  # noqa: F401 — регистрирует все таблицы
 from app.db.base import Base
-from app.models.checks import sql_between, sql_in, sql_length, sql_match, sql_text_array
+from app.models.checks import sql_between, sql_in, sql_length, sql_match, sql_not_match, sql_text_array
 from app.models.enums import (
+    ABSOLUTE_PATH_PATTERN,
+    ALLERGEN_CODE_PATTERN,
     CURRENCY_PATTERN,
     PRICE_TIER_PATTERN,
     QR_TOKEN_PATTERN,
     Lang,
     TableType,
+    WeightUnit,
 )
+from app.models.menu import Allergen
+from app.models.reference import EU14_ALLERGEN_CODES, EU14_ALLERGENS, default_allergen_rows
 
 TABLES = Base.metadata.tables
 TENANT_TABLES = [table for name, table in TABLES.items() if name != "tenants"]
 PG_IDENTIFIER_MAX = 63
 
 # Ожидаемые таблицы по ревизиям (дополняются вместе с новой ревизией).
-EXPECTED_TABLES = {"tenants", "halls", "tables"}
+EXPECTED_TABLES = {
+    "tenants",
+    "halls",
+    "tables",
+    "categories",
+    "menu_items",
+    "menu_item_prices",
+    "menu_item_meta",
+    "allergens",
+    "menu_item_allergens",
+}
 
 # Явный список CHECK по таблицам (короткие имена: ck_<table>_<name>).
 EXPECTED_CHECKS: dict[str, set[str]] = {
     "tenants": {"name", "currency", "languages", "settings"},
     "halls": {"name"},
     "tables": {"name", "type", "price_tier", "external_id", "qr_token"},
+    "categories": {"external_id", "name_az", "name_ru"},
+    "menu_items": {"external_id", "currency"},
+    "menu_item_prices": {"price_tier", "price"},
+    "menu_item_meta": {
+        "name_az",
+        "name_ru",
+        "description_az",
+        "description_ru",
+        "ingredients_az",
+        "ingredients_ru",
+        "spice_level",
+        "prep_minutes",
+        "weight_amount",
+        "weight_unit",
+        "weight",
+        "photo_path",
+    },
+    "allergens": {"code", "name_az", "name_ru"},
+    "menu_item_allergens": set(),
 }
 
 # Numeric-колонки, которые не являются деньгами гостя NUMERIC(10,2) (ADR-7.4).
-NUMERIC_EXCEPTIONS: dict[tuple[str, str], tuple[int, int]] = {}
+NUMERIC_EXCEPTIONS: dict[tuple[str, str], tuple[int, int]] = {
+    ("menu_item_meta", "weight_amount"): (8, 2),  # вес/объём порции, не деньги
+}
 
 
 def _table_ids() -> list[str]:
@@ -212,6 +251,7 @@ def test_sql_builders_render_expected_text() -> None:
     assert sql_length("name", 100, 1) == "char_length(name) BETWEEN 1 AND 100"
     assert sql_length("name_az", 200) == "char_length(name_az) <= 200"
     assert sql_between("spice_level", 0, 3) == "spice_level BETWEEN 0 AND 3"
+    assert sql_not_match("photo_path", "^/") == "photo_path !~ '^/'"
 
 
 @pytest.mark.parametrize("value", ["it's", "nul\x00"])
@@ -231,3 +271,115 @@ def test_sql_builders_reject_bad_column(column: str) -> None:
 def test_sql_in_requires_values() -> None:
     with pytest.raises(ValueError, match="без значений"):
         sql_in("type", [])
+
+
+# ------------------------------------------------------------ меню (#50)
+
+
+def _fk(table: str, referred: str) -> ForeignKeyConstraint:
+    [fk] = [fk for fk in _fks(TABLES[table]) if fk.referred_table.name == referred]
+    return fk
+
+
+@pytest.mark.parametrize(
+    ("table", "referred", "ondelete"),
+    [
+        ("menu_items", "categories", "RESTRICT"),
+        ("menu_item_prices", "menu_items", "CASCADE"),
+        ("menu_item_meta", "menu_items", "CASCADE"),
+        ("menu_item_allergens", "menu_items", "CASCADE"),
+        ("menu_item_allergens", "allergens", "RESTRICT"),
+    ],
+)
+def test_menu_on_delete_rules(table: str, referred: str, ondelete: str) -> None:
+    """ADR-7.3: CASCADE только для строк, принадлежащих позиции; данные кассы — RESTRICT."""
+    assert _fk(table, referred).ondelete == ondelete
+
+
+def test_menu_primary_keys() -> None:
+    def pk(name: str) -> list[str]:
+        return [c.name for c in TABLES[name].primary_key.columns]
+
+    assert pk("menu_item_prices") == ["menu_item_id", "price_tier"]
+    assert pk("menu_item_meta") == ["menu_item_id"]
+    assert pk("menu_item_allergens") == ["menu_item_id", "allergen_id"]
+    assert pk("categories") == pk("menu_items") == pk("allergens") == ["id"]
+
+
+def test_menu_uniques_and_indexes() -> None:
+    assert ("tenant_id", "external_id") in _uniques(TABLES["categories"])
+    assert ("tenant_id", "external_id") in _uniques(TABLES["menu_items"])
+    assert ("tenant_id", "code") in _uniques(TABLES["allergens"])
+    assert {i.name for i in TABLES["menu_items"].indexes} == {"ix_menu_items_tenant_id_category_id"}
+    assert {i.name for i in TABLES["menu_item_allergens"].indexes} == {"ix_menu_item_allergens_tenant_id_allergen_id"}
+
+
+def test_menu_defaults() -> None:
+    meta = TABLES["menu_item_meta"].c
+    assert str(meta.allergens_verified.server_default.arg) == "false"
+    assert str(meta.visible_to_ai.server_default.arg) == "true"
+    assert str(meta.tags.server_default.arg) == "'{}'::text[]"
+    items = TABLES["menu_items"].c
+    assert str(items.is_available.server_default.arg) == "true"
+    assert str(items.is_hidden.server_default.arg) == "false"
+    assert str(TABLES["categories"].c.is_hidden.server_default.arg) == "false"
+    assert str(TABLES["allergens"].c.sort_order.server_default.arg) == "0"
+    assert "updated_at" not in TABLES["menu_item_allergens"].c
+
+
+def test_menu_check_texts() -> None:
+    assert _check_text("menu_item_meta", "spice_level") == sql_between("spice_level", 0, 3)
+    assert _check_text("menu_item_meta", "prep_minutes") == sql_between("prep_minutes", 1, 240)
+    assert _check_text("menu_item_meta", "weight_unit") == sql_in("weight_unit", WeightUnit)
+    assert _check_text("menu_item_meta", "photo_path").startswith(sql_not_match("photo_path", ABSOLUTE_PATH_PATTERN))
+    assert _check_text("menu_item_prices", "price") == "price >= 0"
+    assert _check_text("menu_item_prices", "price_tier") == sql_match("price_tier", PRICE_TIER_PATTERN)
+    assert _check_text("menu_items", "currency") == sql_match("currency", CURRENCY_PATTERN)
+    assert _check_text("allergens", "code") == sql_match("code", ALLERGEN_CODE_PATTERN)
+
+
+@pytest.mark.parametrize(
+    ("path", "allowed"),
+    [
+        ("menu/plov.jpg", True),
+        ("plov.webp", True),
+        ("/etc/passwd", False),
+        (r"\\server\share\a.jpg", False),
+        ("C:/photos/a.jpg", False),
+        (r"c:\photos\a.jpg", False),
+        ("menu/../secret.jpg", False),
+    ],
+)
+def test_photo_path_pattern_semantics(path: str, allowed: bool) -> None:
+    """Тот же шаблон, что в CHECK (в Python и PostgreSQL он значит одно); в БД — ``test_menu.py``."""
+    rejected = re.search(ABSOLUTE_PATH_PATTERN, path) is not None or ".." in path
+    assert rejected is not allowed
+
+
+# ------------------------------------------------------------ справочник аллергенов
+
+
+def test_eu14_allergens_reference() -> None:
+    assert len(EU14_ALLERGENS) == 14
+    assert EU14_ALLERGEN_CODES == tuple(a.code for a in EU14_ALLERGENS)
+    assert len(set(EU14_ALLERGEN_CODES)) == 14
+    for allergen in EU14_ALLERGENS:
+        assert re.match(ALLERGEN_CODE_PATTERN, allergen.code)
+        assert 1 <= len(allergen.name_az) <= 100
+        assert 1 <= len(allergen.name_ru) <= 100
+
+
+def test_default_allergen_rows_for_tenant() -> None:
+    tenant_id = uuid.uuid4()
+    rows = default_allergen_rows(tenant_id)
+    assert [row["code"] for row in rows] == list(EU14_ALLERGEN_CODES)
+    assert {row["tenant_id"] for row in rows} == {tenant_id}
+    orders = [row["sort_order"] for row in rows]
+    assert orders == sorted(orders)
+    assert len(set(orders)) == len(orders)
+    assert set(rows[0]) == {"tenant_id", "code", "name_az", "name_ru", "sort_order"}
+    # Чистая функция: новый список при каждом вызове, исходные данные не меняются.
+    rows[0]["name_ru"] = "изменено"
+    assert default_allergen_rows(tenant_id)[0]["name_ru"] == EU14_ALLERGENS[0].name_ru
+    allergen = Allergen(**rows[1])
+    assert allergen.code == EU14_ALLERGEN_CODES[1]

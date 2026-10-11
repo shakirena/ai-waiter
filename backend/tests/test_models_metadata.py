@@ -14,6 +14,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKeyConstraint,
+    Index,
     Numeric,
     PrimaryKeyConstraint,
     Table,
@@ -24,7 +25,15 @@ from sqlalchemy import (
 
 import app.models  # noqa: F401 — регистрирует все таблицы
 from app.db.base import Base
-from app.models.checks import sql_between, sql_in, sql_length, sql_match, sql_not_match, sql_text_array
+from app.models.checks import (
+    sql_between,
+    sql_in,
+    sql_length,
+    sql_match,
+    sql_not_in,
+    sql_not_match,
+    sql_text_array,
+)
 from app.models.enums import (
     ABSOLUTE_PATH_PATTERN,
     ALLERGEN_CODE_PATTERN,
@@ -32,7 +41,10 @@ from app.models.enums import (
     PRICE_TIER_PATTERN,
     QR_TOKEN_PATTERN,
     Lang,
+    MessageRole,
     TableType,
+    VisitClosedBy,
+    VisitStatus,
     WeightUnit,
 )
 from app.models.menu import Allergen
@@ -53,6 +65,9 @@ EXPECTED_TABLES = {
     "menu_item_meta",
     "allergens",
     "menu_item_allergens",
+    "visits",
+    "messages",
+    "cart_items",
 }
 
 # Явный список CHECK по таблицам (короткие имена: ck_<table>_<name>).
@@ -79,11 +94,27 @@ EXPECTED_CHECKS: dict[str, set[str]] = {
     },
     "allergens": {"code", "name_az", "name_ru"},
     "menu_item_allergens": set(),
+    "visits": {"status", "lang", "closed_by", "closed_state"},
+    "messages": {
+        "role",
+        "text",
+        "content",
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_creation_tokens",
+        "cost_usd",
+        "latency_ms",
+        "content_or_redacted",
+        "redacted_empty",
+    },
+    "cart_items": {"qty", "comment", "price_tier", "price_at_add"},
 }
 
 # Numeric-колонки, которые не являются деньгами гостя NUMERIC(10,2) (ADR-7.4).
 NUMERIC_EXCEPTIONS: dict[tuple[str, str], tuple[int, int]] = {
     ("menu_item_meta", "weight_amount"): (8, 2),  # вес/объём порции, не деньги
+    ("messages", "cost_usd"): (12, 6),  # стоимость вызова ИИ в долях цента (NFR-7)
 }
 
 
@@ -252,6 +283,8 @@ def test_sql_builders_render_expected_text() -> None:
     assert sql_length("name_az", 200) == "char_length(name_az) <= 200"
     assert sql_between("spice_level", 0, 3) == "spice_level BETWEEN 0 AND 3"
     assert sql_not_match("photo_path", "^/") == "photo_path !~ '^/'"
+    assert sql_not_in("status", ["rejected"]) == "status NOT IN ('rejected')"
+    assert sql_not_in("type", ["a", "b"]) == "type NOT IN ('a', 'b')"
 
 
 @pytest.mark.parametrize("value", ["it's", "nul\x00"])
@@ -260,6 +293,8 @@ def test_sql_builders_reject_unsafe_literals(value: str) -> None:
         sql_in("type", [value])
     with pytest.raises(ValueError, match="недопустимый символ"):
         sql_match("type", value)
+    with pytest.raises(ValueError, match="недопустимый символ"):
+        sql_not_in("type", [value])
 
 
 @pytest.mark.parametrize("column", ["Name", "name; DROP", "1col", ""])
@@ -383,3 +418,110 @@ def test_default_allergen_rows_for_tenant() -> None:
     assert default_allergen_rows(tenant_id)[0]["name_ru"] == EU14_ALLERGENS[0].name_ru
     allergen = Allergen(**rows[1])
     assert allergen.code == EU14_ALLERGEN_CODES[1]
+
+
+# ------------------------------------------------------------ визит (#51)
+
+
+def _index(table: str, name: str) -> Index:
+    [index] = [i for i in TABLES[table].indexes if i.name == name]
+    return index
+
+
+def _index_columns(table: str, name: str) -> list[str]:
+    return [c.name for c in _index(table, name).columns]
+
+
+def _where(table: str, name: str) -> str:
+    return str(_index(table, name).dialect_options["postgresql"]["where"])
+
+
+@pytest.mark.parametrize(
+    ("table", "referred", "ondelete"),
+    [
+        ("visits", "tables", "RESTRICT"),
+        ("messages", "visits", "CASCADE"),
+        ("cart_items", "visits", "CASCADE"),
+        ("cart_items", "menu_items", "RESTRICT"),
+    ],
+)
+def test_visit_on_delete_rules(table: str, referred: str, ondelete: str) -> None:
+    """ADR-7.3: сообщения и корзина принадлежат визиту (CASCADE), стол и позиция меню — RESTRICT."""
+    assert _fk(table, referred).ondelete == ondelete
+
+
+def test_visit_indexes() -> None:
+    """ADR-7.5: один открытый визит на стол — частичный уникальный индекс; подметание — частичный индекс."""
+    assert {i.name for i in TABLES["visits"].indexes} == {
+        "uq_visits_open_table",
+        "ix_visits_tenant_id_table_id_opened_at",
+        "ix_visits_open_last_activity",
+    }
+    assert _index("visits", "uq_visits_open_table").unique
+    assert _index_columns("visits", "uq_visits_open_table") == ["table_id"]
+    assert _where("visits", "uq_visits_open_table") == sql_in("status", [VisitStatus.OPEN])
+    assert _index_columns("visits", "ix_visits_open_last_activity") == ["last_activity_at"]
+    assert _where("visits", "ix_visits_open_last_activity") == sql_in("status", [VisitStatus.OPEN])
+    assert _index_columns("visits", "ix_visits_tenant_id_table_id_opened_at") == ["tenant_id", "table_id", "opened_at"]
+
+
+def test_message_indexes_and_columns() -> None:
+    messages = TABLES["messages"]
+    assert {i.name for i in messages.indexes} == {
+        "ix_messages_tenant_id_visit_id_created_at",
+        "ix_messages_retention",
+        "ix_messages_tenant_id_created_at",
+    }
+    assert _where("messages", "ix_messages_retention") == "redacted_at IS NULL"
+    assert _index_columns("messages", "ix_messages_retention") == ["created_at"]
+    # Журнал диалога: только created_at, сообщение не редактируется (кроме обезличивания).
+    assert "updated_at" not in messages.c
+    for column in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens", "cost_usd"):
+        assert not messages.c[column].nullable, column
+        assert str(messages.c[column].server_default.arg) == "0", column
+    for column in ("text", "content", "model", "latency_ms", "redacted_at"):
+        assert messages.c[column].nullable, column
+    # None в Python пишется как SQL NULL, а не JSON null: иначе обезличивание нарушит CHECK.
+    assert messages.c.content.type.none_as_null
+
+
+def test_cart_item_uniques_and_defaults() -> None:
+    cart = TABLES["cart_items"]
+    assert ("tenant_id", "visit_id", "menu_item_id", "comment") in _uniques(cart)
+    assert str(cart.c.comment.server_default.arg) == ""
+    assert not cart.c.comment.nullable
+    assert not cart.c.price_tier.nullable
+    assert cart.c.price_tier.server_default is None
+    assert {i.name for i in cart.indexes} == set()
+
+
+def test_visit_defaults_and_soft_staff_reference() -> None:
+    visits = TABLES["visits"]
+    assert str(visits.c.status.server_default.arg) == VisitStatus.OPEN
+    assert visits.c.lang.server_default is None
+    for column in ("opened_at", "last_activity_at"):
+        assert str(visits.c[column].server_default.arg) == "now()"
+    # ADR-7.7: ссылки на staff_users нет до #19.
+    assert not visits.c.closed_by_staff_id.foreign_keys
+    assert visits.c.closed_by_staff_id.nullable
+
+
+def test_visit_check_texts() -> None:
+    assert _check_text("visits", "status") == sql_in("status", VisitStatus)
+    assert _check_text("visits", "lang") == sql_in("lang", Lang)
+    assert _check_text("visits", "closed_by") == sql_in("closed_by", VisitClosedBy)
+    assert _check_text("messages", "role") == sql_in("role", MessageRole)
+    assert _check_text("messages", "text") == sql_length("text", 8000)
+    assert _check_text("messages", "content") == "jsonb_typeof(content) = 'array'"
+    assert _check_text("cart_items", "qty") == sql_between("qty", 1, 99)
+    assert _check_text("cart_items", "comment") == sql_length("comment", 200)
+    assert _check_text("cart_items", "price_tier") == sql_match("price_tier", PRICE_TIER_PATTERN)
+    assert _check_text("cart_items", "price_at_add") == "price_at_add >= 0"
+    closed_state = _check_text("visits", "closed_state")
+    assert sql_in("status", [VisitStatus.OPEN]) in closed_state
+    assert sql_in("status", [VisitStatus.CLOSED]) in closed_state
+
+
+def test_message_roles_are_claude_api_roles() -> None:
+    """``tool_result`` передаётся блоками в ``user``; ролей ``tool``/``system`` в сообщениях Claude API нет."""
+    assert [role.value for role in MessageRole] == ["user", "assistant"]

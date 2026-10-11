@@ -25,6 +25,7 @@ VERSIONS_DIR = BACKEND_DIR / "alembic" / "versions"
 REVISION_TABLES: dict[str, set[str]] = {
     "0001": {"tenants", "halls", "tables"},
     "0002": {"categories", "menu_items", "menu_item_prices", "menu_item_meta", "allergens", "menu_item_allergens"},
+    "0003": {"visits", "messages", "cart_items"},
 }
 
 
@@ -126,3 +127,11 @@ def test_server_encoding_other_rejected_with_clear_message(encoding: str) -> Non
     module = _load_revision("0001")
     with pytest.raises(RuntimeError, match=rf"кодировке {encoding}, нужна UTF8"):
         module.check_server_encoding(_Connection(encoding))
+
+
+def test_offline_sql_contains_partial_open_visit_index() -> None:
+    """ADR-7.5: один открытый визит на стол — частичный уникальный индекс."""
+    sql = _offline("upgrade", "0002:0003")
+    assert "CREATE UNIQUE INDEX uq_visits_open_table ON visits (table_id) WHERE status IN ('open')" in sql
+    assert "CREATE INDEX ix_messages_retention ON messages (created_at) WHERE redacted_at IS NULL" in sql
+    assert "cost_usd NUMERIC(12, 6) DEFAULT 0 NOT NULL" in sql

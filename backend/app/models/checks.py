@@ -33,6 +33,11 @@ def sql_in(column: str, values: Iterable[str]) -> str:
     return f"{_column(column)} IN ({', '.join(items)})"
 
 
+def sql_not_in(column: str, values: Iterable[str]) -> str:
+    """``column NOT IN ('a', 'b')`` — для условий вида «статус не X или поле заполнено»."""
+    return sql_in(column, values).replace(" IN (", " NOT IN (", 1)
+
+
 def sql_text_array(values: Iterable[str]) -> str:
     """``ARRAY['a', 'b']::text[]``."""
     return f"ARRAY[{', '.join(_literal(str(value)) for value in values)}]::text[]"

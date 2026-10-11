@@ -14,14 +14,18 @@ from app.models.menu import MenuItemAllergen, MenuItemMeta, MenuItemPrice
 from app.models.tenant import Table
 from tests.db.factories import (
     add,
+    build_cart_item,
     build_menu_item,
+    build_message,
     build_table,
+    build_visit,
     create_allergen,
     create_category,
     create_hall,
     create_menu_item,
     create_table,
     create_tenant,
+    create_visit,
     expect_insert_violation,
     expect_violation,
 )
@@ -136,4 +140,50 @@ async def test_allergen_link_cannot_reference_menu_item_of_other_tenant(db_sessi
         db_session,
         "fk_menu_item_allergens_tenant_id_menu_item_id_menu_items",
         MenuItemAllergen(tenant_id=own.id, menu_item_id=foreign_item.id, allergen_id=allergen.id),
+    )
+
+
+# ------------------------------------------------------------ визит (#51)
+
+
+async def test_visit_cannot_reference_table_of_other_tenant(db_session: AsyncSession) -> None:
+    own = await create_tenant(db_session)
+    other = await create_tenant(db_session)
+    foreign_table = await create_table(db_session, other.id)
+    await expect_insert_violation(
+        db_session, "fk_visits_tenant_id_table_id_tables", build_visit(own.id, foreign_table.id)
+    )
+
+
+async def test_cart_item_cannot_reference_menu_item_of_other_tenant(db_session: AsyncSession) -> None:
+    """AC-4: строка корзины со ссылкой на позицию меню другого заведения отклоняется составным FK."""
+    own = await create_tenant(db_session)
+    other = await create_tenant(db_session)
+    visit = await create_visit(db_session, own.id)
+    foreign_item = await create_menu_item(db_session, other.id)
+    await expect_insert_violation(
+        db_session,
+        "fk_cart_items_tenant_id_menu_item_id_menu_items",
+        build_cart_item(own.id, visit.id, foreign_item.id),
+    )
+
+
+async def test_cart_item_cannot_reference_visit_of_other_tenant(db_session: AsyncSession) -> None:
+    own = await create_tenant(db_session)
+    other = await create_tenant(db_session)
+    foreign_visit = await create_visit(db_session, other.id)
+    item = await create_menu_item(db_session, own.id)
+    await expect_insert_violation(
+        db_session,
+        "fk_cart_items_tenant_id_visit_id_visits",
+        build_cart_item(own.id, foreign_visit.id, item.id),
+    )
+
+
+async def test_message_cannot_reference_visit_of_other_tenant(db_session: AsyncSession) -> None:
+    own = await create_tenant(db_session)
+    other = await create_tenant(db_session)
+    foreign_visit = await create_visit(db_session, other.id)
+    await expect_insert_violation(
+        db_session, "fk_messages_tenant_id_visit_id_visits", build_message(own.id, foreign_visit.id)
     )

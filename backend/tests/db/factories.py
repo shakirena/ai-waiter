@@ -10,6 +10,7 @@ from __future__ import annotations
 import secrets
 import uuid
 from collections.abc import Awaitable, Callable
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -18,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.menu import Allergen, Category, MenuItem
 from app.models.tenant import Hall, Table, Tenant
+from app.models.visit import CartItem, Message, Visit
 
 
 def qr_token() -> str:
@@ -99,3 +101,30 @@ async def create_allergen(session: AsyncSession, tenant_id: uuid.UUID, **values:
     values.setdefault("name_az", "Qlüten")
     values.setdefault("name_ru", "Глютен")
     return await add(session, Allergen(tenant_id=tenant_id, **values))
+
+
+def build_visit(tenant_id: uuid.UUID, table_id: uuid.UUID, **values: Any) -> Visit:
+    values.setdefault("lang", "ru")
+    return Visit(tenant_id=tenant_id, table_id=table_id, **values)
+
+
+async def create_visit(
+    session: AsyncSession, tenant_id: uuid.UUID, table_id: uuid.UUID | None = None, **values: Any
+) -> Visit:
+    if table_id is None:
+        table_id = (await create_table(session, tenant_id)).id
+    return await add(session, build_visit(tenant_id, table_id, **values))
+
+
+def build_cart_item(tenant_id: uuid.UUID, visit_id: uuid.UUID, menu_item_id: uuid.UUID, **values: Any) -> CartItem:
+    values.setdefault("qty", 1)
+    values.setdefault("price_tier", "default")
+    values.setdefault("price_at_add", Decimal("12.50"))
+    return CartItem(tenant_id=tenant_id, visit_id=visit_id, menu_item_id=menu_item_id, **values)
+
+
+def build_message(tenant_id: uuid.UUID, visit_id: uuid.UUID, **values: Any) -> Message:
+    values.setdefault("role", "user")
+    values.setdefault("text", "Что у вас есть из супов?")
+    values.setdefault("content", [{"type": "text", "text": values["text"]}])
+    return Message(tenant_id=tenant_id, visit_id=visit_id, **values)

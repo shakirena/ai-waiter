@@ -21,7 +21,7 @@ from sqlalchemy import Connection, text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.models.enums import TableType, WeightUnit
+from app.models.enums import Lang, MessageRole, TableType, VisitClosedBy, VisitStatus, WeightUnit
 from tests.db.conftest import BACKEND_DIR, alembic_command, run_in_thread
 
 pytestmark = pytest.mark.db
@@ -30,6 +30,7 @@ pytestmark = pytest.mark.db
 REVISION_TABLES: dict[str, set[str]] = {
     "0001": {"tenants", "halls", "tables"},
     "0002": {"categories", "menu_items", "menu_item_prices", "menu_item_meta", "allergens", "menu_item_allergens"},
+    "0003": {"visits", "messages", "cart_items"},
 }
 
 
@@ -87,6 +88,10 @@ def test_downgrade_one_step_drops_only_revision_tables(restore_head: str, revisi
 ENUM_CHECKS: dict[str, type[StrEnum]] = {
     "ck_tables_type": TableType,
     "ck_menu_item_meta_weight_unit": WeightUnit,
+    "ck_visits_status": VisitStatus,
+    "ck_visits_lang": Lang,
+    "ck_visits_closed_by": VisitClosedBy,
+    "ck_messages_role": MessageRole,
 }
 
 

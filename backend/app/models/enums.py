@@ -93,6 +93,14 @@ class TableType(StrEnum):
     CABIN = "cabin"
 
 
+class WeightUnit(StrEnum):
+    """Единица веса/объёма порции (``menu_item_meta.weight_unit``); на AZ/RU локализуется при показе."""
+
+    G = "g"
+    ML = "ml"
+    PCS = "pcs"
+
+
 class MessageRole(StrEnum):
     """Роль сообщения в терминах Claude API: ``user`` — гость или tool_result, ``assistant`` — бот."""
 
@@ -112,3 +120,9 @@ DEFAULT_PRICE_TIER: Final[str] = "default"
 PRICE_TIER_PATTERN: Final[str] = r"^[a-z][a-z0-9_]{0,31}$"
 # CHECK для валюты: ISO 4217.
 CURRENCY_PATTERN: Final[str] = r"^[A-Z]{3}$"
+# CHECK для qr_token: base64url, не короче 22 символов (≥ 128 бит, FR-1).
+QR_TOKEN_PATTERN: Final[str] = r"^[A-Za-z0-9_-]{22,64}$"  # noqa: S105 — шаблон, не секрет
+# CHECK для кода аллергена (gluten, milk, ...): как тариф — строчные латинские буквы, цифры, «_».
+ALLERGEN_CODE_PATTERN: Final[str] = r"^[a-z][a-z0-9_]{0,31}$"
+# CHECK для относительного ключа фото в хранилище медиа: не начинается с «/», «\» или буквы диска.
+ABSOLUTE_PATH_PATTERN: Final[str] = r"^([/\\]|[A-Za-z]:)"

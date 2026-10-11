@@ -10,8 +10,10 @@
 - ``enums.py`` — значения статусов для CHECK (без SQLAlchemy);
 - ``reference.py`` — справочные данные по умолчанию (коды 14 аллергенов ЕС).
 
-После реализации пакет импортирует все модули с моделями, чтобы ``Base.metadata`` в
-``alembic/env.py`` содержала все таблицы::
-
-    from app.models import menu, order, tenant, visit  # noqa: F401
+Пакет импортирует все модули с моделями, чтобы ``Base.metadata`` в ``alembic/env.py``
+содержала все таблицы (модули добавляются вместе со своей ревизией Alembic).
 """
+
+from app.models import tenant
+
+__all__ = ["tenant"]

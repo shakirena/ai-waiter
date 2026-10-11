@@ -39,11 +39,11 @@ def test_ini_has_no_connection_string_and_no_timezone() -> None:
 
 
 def test_versions_chain_has_at_most_one_root_starting_at_0001() -> None:
-    """Цепочка линейна; если ревизии есть, корень — 0001 (#49)."""
+    """Цепочка линейна, корень — 0001 (#49)."""
     script = ScriptDirectory.from_config(Config(INI))
     assert len(script.get_heads()) <= 1
     bases = script.get_bases()
-    assert bases in ([], ["0001"])
+    assert bases == ["0001"]
 
 
 def test_offline_upgrade_uses_explicit_url() -> None:

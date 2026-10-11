@@ -8,6 +8,9 @@
 
         name: Mapped[str] = mapped_column(Text)
 
+Порядок колонок в DDL: ``id``, ``tenant_id``, колонки модели, ``created_at``/``updated_at``
+(``sort_order``).
+
 ``__table_args__`` формирует ``TenantMixin``: свои ограничения модель перечисляет в
 ``__extra_table_args__`` (ограничения и индексы; словарь опций таблицы — последним элементом,
 как в ``__table_args__``).
@@ -33,6 +36,7 @@ class UUIDPrimaryKeyMixin:
         Uuid,
         primary_key=True,
         default=new_id,
+        sort_order=-20,
         server_default=text("gen_random_uuid()"),
     )
 
@@ -56,6 +60,7 @@ class TenantMixin:
         Uuid,
         ForeignKey("tenants.id", ondelete="RESTRICT"),
         nullable=False,
+        sort_order=-10,
     )
 
     @declared_attr.directive
@@ -80,10 +85,12 @@ class TimestampMixin:
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
+        sort_order=10,
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+        sort_order=10,
     )

@@ -6,15 +6,16 @@
 
 ## Ready for Dev
 
-Задача #7 (модель данных v1): истории #48-#54 в kanban:ready-for-dev (G2 PASS 2026-10-10). Порядок: #48 -> #49 -> #50 -> #51 -> #52 (одна цепочка ревизий Alembic, строго по очереди), затем #53 и #54 параллельно. Начинать с #48. Spec: docs/specs/feature-7-data-model.md; arch: docs/arch/feature-7-data-model.md.
+*(пусто)*
 
 ## In Development (WIP: 0/5)
 
 *(пусто)*
 
-## In Testing (WIP: 0/5)
+## In Testing (WIP: 8/5 — одна feature #7, тестируется единым PR)
 
-*(пусто)*
+Задача #7 (модель данных v1): истории #48, #49, #50, #51, #52, #53, #54, #56 — kanban:testing, G3, G4 и security review пройдены. Код: ветка feature/7-data-model, PR #57 (в main не влит). Doc-sync после разработки выполнен 2026-10-12 (docs/traceability.md, словарь данных и список тестов в docs/arch/feature-7-data-model.md). Следующий шаг — /test (G5): TC-документация по AC-1…AC-7 и #56, unit-тесты, прогон `-m db` на `ai_waiter_test`.
+Важно: ревизия 0002 изменена в #54 (индексы `(tenant_id, menu_item_id)`) — локальные БД, поднятые старой 0002, пересоздать перед прогоном db-тестов (story-54.md).
 
 ## Ready to Deploy (группа feature #6)
 

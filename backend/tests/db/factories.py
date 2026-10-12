@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.menu import Allergen, Category, MenuItem
+from app.models.order import Order, OrderEvent, OrderItem
 from app.models.tenant import Hall, Table, Tenant
 from app.models.visit import CartItem, Message, Visit
 
@@ -128,3 +129,32 @@ def build_message(tenant_id: uuid.UUID, visit_id: uuid.UUID, **values: Any) -> M
     values.setdefault("text", "Что у вас есть из супов?")
     values.setdefault("content", [{"type": "text", "text": values["text"]}])
     return Message(tenant_id=tenant_id, visit_id=visit_id, **values)
+
+
+def build_order(tenant_id: uuid.UUID, visit_id: uuid.UUID, **values: Any) -> Order:
+    values.setdefault("idempotency_key", uuid.uuid4())
+    values.setdefault("price_tier", "default")
+    values.setdefault("total", Decimal("25.00"))
+    values.setdefault("currency", "AZN")
+    return Order(tenant_id=tenant_id, visit_id=visit_id, **values)
+
+
+async def create_order(
+    session: AsyncSession, tenant_id: uuid.UUID, visit_id: uuid.UUID | None = None, **values: Any
+) -> Order:
+    if visit_id is None:
+        visit_id = (await create_visit(session, tenant_id)).id
+    return await add(session, build_order(tenant_id, visit_id, **values))
+
+
+def build_order_item(tenant_id: uuid.UUID, order_id: uuid.UUID, menu_item_id: uuid.UUID, **values: Any) -> OrderItem:
+    values.setdefault("name_snapshot", "Плов")
+    values.setdefault("qty", 1)
+    values.setdefault("price_at_order", Decimal("12.50"))
+    return OrderItem(tenant_id=tenant_id, order_id=order_id, menu_item_id=menu_item_id, **values)
+
+
+def build_order_event(tenant_id: uuid.UUID, order_id: uuid.UUID, **values: Any) -> OrderEvent:
+    values.setdefault("type", "created")
+    values.setdefault("actor_type", "guest")
+    return OrderEvent(tenant_id=tenant_id, order_id=order_id, **values)

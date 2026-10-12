@@ -17,12 +17,16 @@ from tests.db.factories import (
     build_cart_item,
     build_menu_item,
     build_message,
+    build_order,
+    build_order_event,
+    build_order_item,
     build_table,
     build_visit,
     create_allergen,
     create_category,
     create_hall,
     create_menu_item,
+    create_order,
     create_table,
     create_tenant,
     create_visit,
@@ -186,4 +190,51 @@ async def test_message_cannot_reference_visit_of_other_tenant(db_session: AsyncS
     foreign_visit = await create_visit(db_session, other.id)
     await expect_insert_violation(
         db_session, "fk_messages_tenant_id_visit_id_visits", build_message(own.id, foreign_visit.id)
+    )
+
+
+# ------------------------------------------------------------ заказ (#52)
+
+
+async def test_order_cannot_reference_visit_of_other_tenant(db_session: AsyncSession) -> None:
+    """AC-5: заказ на визит другого заведения отклоняется составным FK."""
+    own = await create_tenant(db_session)
+    other = await create_tenant(db_session)
+    foreign_visit = await create_visit(db_session, other.id)
+    await expect_insert_violation(
+        db_session, "fk_orders_tenant_id_visit_id_visits", build_order(own.id, foreign_visit.id)
+    )
+
+
+async def test_order_item_cannot_reference_menu_item_of_other_tenant(db_session: AsyncSession) -> None:
+    """AC-5: позиция заказа на блюдо другого заведения отклоняется составным FK."""
+    own = await create_tenant(db_session)
+    other = await create_tenant(db_session)
+    order = await create_order(db_session, own.id)
+    foreign_item = await create_menu_item(db_session, other.id)
+    await expect_insert_violation(
+        db_session,
+        "fk_order_items_tenant_id_menu_item_id_menu_items",
+        build_order_item(own.id, order.id, foreign_item.id),
+    )
+
+
+async def test_order_item_cannot_reference_order_of_other_tenant(db_session: AsyncSession) -> None:
+    own = await create_tenant(db_session)
+    other = await create_tenant(db_session)
+    foreign_order = await create_order(db_session, other.id)
+    item = await create_menu_item(db_session, own.id)
+    await expect_insert_violation(
+        db_session,
+        "fk_order_items_tenant_id_order_id_orders",
+        build_order_item(own.id, foreign_order.id, item.id),
+    )
+
+
+async def test_order_event_cannot_reference_order_of_other_tenant(db_session: AsyncSession) -> None:
+    own = await create_tenant(db_session)
+    other = await create_tenant(db_session)
+    foreign_order = await create_order(db_session, other.id)
+    await expect_insert_violation(
+        db_session, "fk_order_events_tenant_id_order_id_orders", build_order_event(own.id, foreign_order.id)
     )

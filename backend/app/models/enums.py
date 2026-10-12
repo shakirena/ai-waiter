@@ -3,7 +3,7 @@ Pydantic-схем и TS-типов.
 
 Статусы хранятся как ``text`` + ``CHECK (col IN (...))``; список значений в CHECK строится
 из этих перечислений. Новое значение = правка перечисления + миграция с пересозданием CHECK
-(``alembic check`` CHECK не сравнивает — это делает тест ``tests/db/test_check_constraints.py``).
+(``alembic check`` CHECK не сравнивает — это делает ``ENUM_CHECKS`` в ``tests/db/test_migrations.py``, DEC-009).
 """
 
 from __future__ import annotations
@@ -26,13 +26,15 @@ class OrderStatus(StrEnum):
 
 
 # Допустимые переходы (ТЗ 4.6). Проверяет сервис заказов; каждый переход пишет order_events.
-# Терминальные: rejected, in_pos, pos_failed (ручной ввод в кассу — событие, не статус).
+# Дополнение к ТЗ, утверждённое пользователем: escalated → edited (FR-13: правка перед подтверждением).
+# Терминальные: rejected, in_pos, pos_failed (ручной ввод в кассу — событие manual_pos_entry, не статус).
+# Правка уже отредактированного заказа (edited → edited) — не переход: статус тот же, пишется событие.
 ORDER_TRANSITIONS: Final[dict[OrderStatus, frozenset[OrderStatus]]] = {
     OrderStatus.SUBMITTED: frozenset(
         {OrderStatus.EDITED, OrderStatus.CONFIRMED, OrderStatus.REJECTED, OrderStatus.ESCALATED}
     ),
     OrderStatus.EDITED: frozenset({OrderStatus.CONFIRMED, OrderStatus.REJECTED, OrderStatus.ESCALATED}),
-    OrderStatus.ESCALATED: frozenset({OrderStatus.CONFIRMED, OrderStatus.REJECTED}),
+    OrderStatus.ESCALATED: frozenset({OrderStatus.EDITED, OrderStatus.CONFIRMED, OrderStatus.REJECTED}),
     OrderStatus.CONFIRMED: frozenset({OrderStatus.SENT_TO_POS, OrderStatus.IN_POS, OrderStatus.POS_FAILED}),
     OrderStatus.SENT_TO_POS: frozenset({OrderStatus.IN_POS, OrderStatus.POS_FAILED}),
     OrderStatus.REJECTED: frozenset(),
@@ -46,9 +48,12 @@ CONFIRMED_STATUSES: Final[frozenset[OrderStatus]] = frozenset(
 )
 
 
-def can_transition(current: OrderStatus, target: OrderStatus) -> bool:
-    """``target in ORDER_TRANSITIONS[current]``."""
-    raise NotImplementedError
+def can_transition(current: OrderStatus | str, target: OrderStatus | str) -> bool:
+    """``True``, если из статуса ``current`` можно перейти в ``target`` (``ORDER_TRANSITIONS``).
+
+    Принимает и строки из БД: неизвестное значение — ``ValueError`` (ошибка данных, а не «нельзя»).
+    """
+    return OrderStatus(target) in ORDER_TRANSITIONS[OrderStatus(current)]
 
 
 class OrderEventType(StrEnum):

@@ -26,6 +26,7 @@ REVISION_TABLES: dict[str, set[str]] = {
     "0001": {"tenants", "halls", "tables"},
     "0002": {"categories", "menu_items", "menu_item_prices", "menu_item_meta", "allergens", "menu_item_allergens"},
     "0003": {"visits", "messages", "cart_items"},
+    "0004": {"orders", "order_items", "order_events"},
 }
 
 
@@ -135,3 +136,28 @@ def test_offline_sql_contains_partial_open_visit_index() -> None:
     assert "CREATE UNIQUE INDEX uq_visits_open_table ON visits (table_id) WHERE status IN ('open')" in sql
     assert "CREATE INDEX ix_messages_retention ON messages (created_at) WHERE redacted_at IS NULL" in sql
     assert "cost_usd NUMERIC(12, 6) DEFAULT 0 NOT NULL" in sql
+
+
+def test_offline_sql_creates_and_drops_append_only_trigger() -> None:
+    """ADR-7.6: триггер создаётся после order_events, downgrade удаляет его и функцию до таблицы."""
+    up_sql = _offline("upgrade", "0003:0004")
+    assert "CREATE FUNCTION order_events_append_only() RETURNS trigger LANGUAGE plpgsql" in up_sql
+    assert "USING ERRCODE = 'restrict_violation'" in up_sql
+    assert "CREATE TRIGGER trg_order_events_append_only BEFORE UPDATE OR DELETE ON order_events" in up_sql
+    assert up_sql.index("CREATE TABLE order_events") < up_sql.index("CREATE TRIGGER trg_order_events_append_only")
+    assert "CONSTRAINT uq_orders_tenant_id_idempotency_key UNIQUE (tenant_id, idempotency_key)" in up_sql
+
+    down_sql = _offline("downgrade", "0004:0003")
+    trigger = down_sql.index("DROP TRIGGER trg_order_events_append_only ON order_events")
+    function = down_sql.index("DROP FUNCTION order_events_append_only()")
+    assert trigger < function < down_sql.index("DROP TABLE order_events")
+    # Обратный порядок: сначала дочерние таблицы, заказы — последними.
+    assert down_sql.index("DROP TABLE order_items") < down_sql.index("DROP TABLE orders")
+    assert down_sql.index("DROP TABLE order_events") < down_sql.index("DROP TABLE orders")
+
+
+def test_offline_upgrade_head_has_all_fifteen_tables_and_trigger() -> None:
+    """ADR-7.11: офлайн-SQL всей цепочки содержит 15 таблиц модели и триггер журнала."""
+    sql = _offline("upgrade", "head")
+    assert len(_created_tables(sql)) == 15
+    assert "CREATE TRIGGER trg_order_events_append_only" in sql

@@ -37,11 +37,15 @@ from app.models.checks import (
 from app.models.enums import (
     ABSOLUTE_PATH_PATTERN,
     ALLERGEN_CODE_PATTERN,
+    CONFIRMED_STATUSES,
     CURRENCY_PATTERN,
     PRICE_TIER_PATTERN,
     QR_TOKEN_PATTERN,
+    ActorType,
     Lang,
     MessageRole,
+    OrderEventType,
+    OrderStatus,
     TableType,
     VisitClosedBy,
     VisitStatus,
@@ -68,6 +72,9 @@ EXPECTED_TABLES = {
     "visits",
     "messages",
     "cart_items",
+    "orders",
+    "order_items",
+    "order_events",
 }
 
 # Явный список CHECK по таблицам (короткие имена: ck_<table>_<name>).
@@ -109,6 +116,20 @@ EXPECTED_CHECKS: dict[str, set[str]] = {
         "redacted_empty",
     },
     "cart_items": {"qty", "comment", "price_tier", "price_at_add"},
+    "orders": {
+        "status",
+        "price_tier",
+        "total",
+        "currency",
+        "pos_total",
+        "reject_reason_length",
+        "pos_ref",
+        "pos_error",
+        "confirmed_at",
+        "reject_reason",
+    },
+    "order_items": {"qty", "price_at_order", "comment"},
+    "order_events": {"type", "from_status", "to_status", "actor_type", "payload", "status_change"},
 }
 
 # Numeric-колонки, которые не являются деньгами гостя NUMERIC(10,2) (ADR-7.4).
@@ -525,3 +546,101 @@ def test_visit_check_texts() -> None:
 def test_message_roles_are_claude_api_roles() -> None:
     """``tool_result`` передаётся блоками в ``user``; ролей ``tool``/``system`` в сообщениях Claude API нет."""
     assert [role.value for role in MessageRole] == ["user", "assistant"]
+
+
+# ------------------------------------------------------------ заказ (#52)
+
+
+@pytest.mark.parametrize(
+    ("table", "referred", "ondelete"),
+    [
+        ("orders", "visits", "RESTRICT"),
+        ("order_items", "orders", "CASCADE"),
+        ("order_items", "menu_items", "RESTRICT"),
+        ("order_events", "orders", "RESTRICT"),
+    ],
+)
+def test_order_on_delete_rules(table: str, referred: str, ondelete: str) -> None:
+    """ADR-7.3, 7.6: строки заказа принадлежат заказу; заказы и журнал не удаляются."""
+    assert _fk(table, referred).ondelete == ondelete
+
+
+def test_order_indexes() -> None:
+    assert {i.name for i in TABLES["orders"].indexes} == {
+        "ix_orders_tenant_id_visit_id",
+        "ix_orders_tenant_id_status_created_at",
+        "ix_orders_pending_confirm",
+        "ix_orders_pos_queue",
+    }
+    assert _index_columns("orders", "ix_orders_tenant_id_status_created_at") == ["tenant_id", "status", "created_at"]
+    assert _index_columns("orders", "ix_orders_pending_confirm") == ["created_at"]
+    assert _where("orders", "ix_orders_pending_confirm") == sql_in(
+        "status", [OrderStatus.SUBMITTED, OrderStatus.EDITED]
+    )
+    assert _index_columns("orders", "ix_orders_pos_queue") == ["tenant_id", "confirmed_at", "id"]
+    assert _where("orders", "ix_orders_pos_queue") == sql_in("status", [OrderStatus.CONFIRMED, OrderStatus.SENT_TO_POS])
+    assert {i.name for i in TABLES["order_events"].indexes} == {"ix_order_events_tenant_id_order_id_created_at"}
+    assert {i.name for i in TABLES["order_items"].indexes} == set()
+
+
+def test_order_uniques_and_types() -> None:
+    orders = TABLES["orders"]
+    assert ("tenant_id", "idempotency_key") in _uniques(orders)
+    assert ("idempotency_key",) not in _uniques(orders)  # не глобально: нет межарендного оракула
+    assert isinstance(orders.c.idempotency_key.type, Uuid)
+    assert ("tenant_id", "order_id", "menu_item_id", "comment") in _uniques(TABLES["order_items"])
+    # ADR-7.7: ссылки на staff_users нет до #19; actor_id — мягкая ссылка навсегда.
+    assert not orders.c.confirmed_by_staff_id.foreign_keys
+    assert not TABLES["order_events"].c.actor_id.foreign_keys
+
+
+def test_order_defaults() -> None:
+    orders = TABLES["orders"].c
+    assert str(orders.status.server_default.arg) == OrderStatus.SUBMITTED
+    for column in ("price_tier", "total", "currency"):
+        assert not orders[column].nullable, column
+        assert orders[column].server_default is None, column
+    items = TABLES["order_items"].c
+    assert str(items.comment.server_default.arg) == ""
+    assert str(items.removed_by_staff.server_default.arg) == "false"
+    assert not items.name_snapshot.nullable
+    events = TABLES["order_events"].c
+    assert str(events.payload.server_default.arg) == "'{}'::jsonb"
+    assert "updated_at" not in events
+
+
+def test_order_check_texts() -> None:
+    assert _check_text("orders", "status") == sql_in("status", OrderStatus)
+    assert _check_text("orders", "price_tier") == sql_match("price_tier", PRICE_TIER_PATTERN)
+    assert _check_text("orders", "currency") == sql_match("currency", CURRENCY_PATTERN)
+    assert _check_text("orders", "total") == "total >= 0"
+    assert _check_text("orders", "pos_total") == "pos_total >= 0"
+    assert _check_text("orders", "reject_reason_length") == sql_length("reject_reason", 500, 1)
+    assert _check_text("orders", "pos_ref") == sql_length("pos_ref", 64)
+    assert _check_text("orders", "pos_error") == sql_length("pos_error", 1000)
+    confirmed = [s for s in OrderStatus if s in CONFIRMED_STATUSES]
+    assert _check_text("orders", "confirmed_at") == f"{sql_not_in('status', confirmed)} OR confirmed_at IS NOT NULL"
+    assert _check_text("orders", "reject_reason") == "status NOT IN ('rejected') OR reject_reason IS NOT NULL"
+    assert _check_text("order_items", "qty") == sql_between("qty", 1, 99)
+    assert _check_text("order_items", "price_at_order") == "price_at_order >= 0"
+    assert _check_text("order_items", "comment") == sql_length("comment", 200)
+    assert _check_text("order_events", "type") == sql_in("type", OrderEventType)
+    assert _check_text("order_events", "from_status") == sql_in("from_status", OrderStatus)
+    assert _check_text("order_events", "to_status") == sql_in("to_status", OrderStatus)
+    assert _check_text("order_events", "actor_type") == sql_in("actor_type", ActorType)
+    assert _check_text("order_events", "payload") == "jsonb_typeof(payload) = 'object'"
+    assert _check_text("order_events", "status_change") == "type NOT IN ('status_changed') OR to_status IS NOT NULL"
+
+
+def test_order_event_types_include_manual_pos_entry() -> None:
+    assert [t.value for t in OrderEventType] == [
+        "created",
+        "status_changed",
+        "item_removed",
+        "item_qty_changed",
+        "pos_ack",
+        "pos_error",
+        "pos_total_mismatch",
+        "manual_pos_entry",
+    ]
+    assert [a.value for a in ActorType] == ["guest", "staff", "connector", "system"]

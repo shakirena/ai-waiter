@@ -368,6 +368,9 @@ def test_menu_uniques_and_indexes() -> None:
     assert ("tenant_id", "code") in _uniques(TABLES["allergens"])
     assert {i.name for i in TABLES["menu_items"].indexes} == {"ix_menu_items_tenant_id_category_id"}
     assert {i.name for i in TABLES["menu_item_allergens"].indexes} == {"ix_menu_item_allergens_tenant_id_allergen_id"}
+    # PK этих таблиц начинается с menu_item_id: tenant_id ведущий только в отдельном индексе (#54, NFR-1).
+    assert {i.name for i in TABLES["menu_item_prices"].indexes} == {"ix_menu_item_prices_tenant_id_menu_item_id"}
+    assert {i.name for i in TABLES["menu_item_meta"].indexes} == {"ix_menu_item_meta_tenant_id_menu_item_id"}
 
 
 def test_menu_defaults() -> None:

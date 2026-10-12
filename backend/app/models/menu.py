@@ -117,6 +117,8 @@ class MenuItemPrice(TenantMixin, TimestampMixin, Base):
         ),
         CheckConstraint(sql_match("price_tier", PRICE_TIER_PATTERN), name="price_tier"),
         CheckConstraint("price >= 0", name="price"),
+        # PK начинается с menu_item_id, поэтому tenant_id нужен ведущим в отдельном индексе (NFR-1, ADR-7.3).
+        Index(None, "tenant_id", "menu_item_id"),
     )
 
     menu_item_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
@@ -149,6 +151,8 @@ class MenuItemMeta(TenantMixin, TimestampMixin, Base):
             f"{sql_not_match('photo_path', ABSOLUTE_PATH_PATTERN)} AND strpos(photo_path, '..') = 0",
             name="photo_path",
         ),
+        # PK — menu_item_id, поэтому tenant_id нужен ведущим в отдельном индексе (NFR-1, ADR-7.3).
+        Index(None, "tenant_id", "menu_item_id"),
     )
 
     menu_item_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)

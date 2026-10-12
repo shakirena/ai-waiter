@@ -176,6 +176,12 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("menu_item_id", name=op.f("pk_menu_item_meta")),
     )
+    op.create_index(
+        op.f("ix_menu_item_meta_tenant_id_menu_item_id"),
+        "menu_item_meta",
+        ["tenant_id", "menu_item_id"],
+        unique=False,
+    )
     op.create_table(
         "menu_item_prices",
         sa.Column("tenant_id", sa.Uuid(), nullable=False),
@@ -197,10 +203,18 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("menu_item_id", "price_tier", name=op.f("pk_menu_item_prices")),
     )
+    op.create_index(
+        op.f("ix_menu_item_prices_tenant_id_menu_item_id"),
+        "menu_item_prices",
+        ["tenant_id", "menu_item_id"],
+        unique=False,
+    )
 
 
 def downgrade() -> None:
+    op.drop_index(op.f("ix_menu_item_prices_tenant_id_menu_item_id"), table_name="menu_item_prices")
     op.drop_table("menu_item_prices")
+    op.drop_index(op.f("ix_menu_item_meta_tenant_id_menu_item_id"), table_name="menu_item_meta")
     op.drop_table("menu_item_meta")
     op.drop_index(op.f("ix_menu_item_allergens_tenant_id_allergen_id"), table_name="menu_item_allergens")
     op.drop_table("menu_item_allergens")

@@ -127,6 +127,21 @@ jobs:
       - name: Установить зависимости (uv.lock, extra scaled)
         run: uv sync --frozen --extra scaled
 
+      # Обратимость миграций и соответствие моделей миграциям через CLI Alembic (#54, ADR-7.10, G4).
+      # Alembic берёт DATABASE_URL из env джоба — та же одноразовая БД ai_waiter_test. Шаги идут до
+      # pytest: db-фикстуры всё равно пересоздают схему (DROP SCHEMA public + upgrade head).
+      - name: Миграции alembic upgrade head
+        run: uv run alembic upgrade head
+
+      - name: Миграции alembic downgrade base
+        run: uv run alembic downgrade base
+
+      - name: Миграции alembic upgrade head (повторно)
+        run: uv run alembic upgrade head
+
+      - name: Модели совпадают с миграциями (alembic check)
+        run: uv run alembic check
+
       # С #7 (#48) db-тесты есть, поэтому обход кода 5 («тесты не выбраны») убран: пустой набор
       # теперь ошибка. Схему БД создают сами тесты миграциями (alembic upgrade head); без
       # TEST_DATABASE_URL при CI=true db-тесты падают, а не пропускаются.

@@ -23,3 +23,15 @@
 - Порядок в CI: CLI-цикл до pytest; db-фикстуры сами делают `DROP SCHEMA public` + `upgrade head`, поэтому состояние после CLI им не мешает.
 
 **Build:** ruff check OK · ruff format --check OK · pytest полный 1017 passed, 3 skipped (scaled без Redis) · -m db 222 passed · -m "not db and not scaled" 795 passed · alembic upgrade head / downgrade base / upgrade head / check на ai_waiter_test — код 0, БД оставлена в head (0004)
+
+---
+
+## 🔒 Security
+
+**Verdict:** FAIL (коммит af18f88; комментарий в #54, метка `security:failed`)
+**Файлы:** .github/workflows/ci.yml, README.md, backend/tests/db/test_schema_invariants.py, backend/alembic/versions/0002_menu.py, backend/app/models/menu.py, backend/tests/test_models_metadata.py, backend/tests/test_repo_artifacts.py
+**Findings:** CRITICAL 0 · HIGH 1 · MEDIUM 0 · LOW 1 · INFO 3
+
+- HIGH — README.md:179–186 (PowerShell) и :189 (Linux): если в `.env` нет `TEST_DATABASE_URL` (в `.env.example` строка закомментирована), `.Matches[0]` падает, `DATABASE_URL` не задаётся, а следующие строки блока выполняются: `alembic downgrade base` идёт на рабочую БД из `.env`. Проверено в PS 5.1. Нужно сверять URL с `*_test` и запускать цикл одним условным блоком (или скриптом / pytest с `require_test_database_url()`). Исправить в этой ветке.
+- LOW — ревизия 0002 изменена задним числом. Допустимо, пока PR не влит; потом только новые ревизии.
+- INFO — CI: `contents: read`, actions по SHA, нет секретов и подстановок `${{ }}` в `run`, DATABASE_URL = одноразовая `ai_waiter_test`. Тест: bind-параметры, f-строки только с константой `PROBE`, откат транзакции, guard `*_test`. Новые индексы `(tenant_id, menu_item_id)` усиливают NFR-1, downgrade симметричен.

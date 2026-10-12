@@ -172,20 +172,15 @@ cd ..
 
 Миграции применяются к базе из `DATABASE_URL`. Чтобы применить их к другой базе, задайте `DATABASE_URL` в окружении процесса — она важнее `.env`.
 
-Проверка миграций перед пушем — то же, что делает CI-джоб `backend-services`: цикл `upgrade head` → `downgrade base` → `upgrade head` (миграции обратимы), `alembic check` (модели совпадают с миграциями) и тесты с PostgreSQL, включая инварианты схемы (`tests/db/test_schema_invariants.py`: `tenant_id`, `NUMERIC(10,2)`, `timestamptz`). Запускайте её на тестовой базе `ai_waiter_test`, а не на рабочей: `downgrade base` удаляет все таблицы. На Windows хватает PostgreSQL-службы, Docker не нужен:
+Проверка миграций перед пушем — то же, что делает CI-джоб `backend-services`: цикл `upgrade head` → `downgrade base` → `upgrade head` (миграции обратимы), `alembic check` (модели совпадают с миграциями) и инварианты схемы (`tests/db/test_schema_invariants.py`: `tenant_id`, `NUMERIC(10,2)`, `timestamptz`). Локально всё это выполняют db-тесты (цикл и `alembic check` — `tests/db/test_alembic.py`). Они подключаются только по `TEST_DATABASE_URL` и отказываются работать, если имя базы не оканчивается на `_test`, поэтому рабочую базу не трогают. На Windows хватает PostgreSQL-службы, Docker не нужен:
 
-```powershell
-# Windows (PowerShell), из каталога backend/. DATABASE_URL — только для этого окна, значение не выводится.
-$env:DATABASE_URL = (Select-String -Path ..\.env -Pattern '^TEST_DATABASE_URL=(.+)$').Matches[0].Groups[1].Value
-uv run alembic upgrade head
-uv run alembic downgrade base
-uv run alembic upgrade head
-uv run alembic check
-Remove-Item Env:DATABASE_URL
-uv run pytest -q -m db            # берёт TEST_DATABASE_URL из .env сам
+```bash
+cd backend
+uv run pytest -q -m db      # без uv в PATH: .\.venv\Scripts\python.exe -m pytest -q -m db
+cd ..
 ```
 
-Без uv в `PATH` те же команды выполняются из виртуального окружения: `.\.venv\Scripts\alembic.exe upgrade head` и т. д., тесты — `.\.venv\Scripts\python.exe -m pytest -q -m db`. На Linux: `DATABASE_URL="$(grep -oP '^TEST_DATABASE_URL=\K.+' ../.env)" uv run alembic upgrade head` (и так же для остальных команд). Каждая команда должна завершиться с кодом 0; после проверки тестовая база остаётся в `head`.
+Без `TEST_DATABASE_URL` (в `.env` или окружении) db-тесты пропускаются (skipped), а не проходят: проверьте, что в итоге нет `skipped`. Не запускайте `alembic downgrade base` вручную: команда работает с базой из `DATABASE_URL`, обычно рабочей, и удаляет все её таблицы. В CI этот цикл выполняется через CLI на одноразовой базе сервис-контейнера.
 
 Демо-данные для разработки (вымышленное заведение «Demo Restoran»: 2 зала, 6 столов, 14 аллергенов ЕС, 4 категории и 15 блюд с ценами `default`/`vip` на AZ/RU, открытый визит и заказ):
 

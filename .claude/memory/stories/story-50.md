@@ -25,3 +25,7 @@
 - Relationships не объявлены (ADR-7.3).
 
 **Build:** ruff OK · ruff format OK · pytest -m "not db and not scaled" 618 passed · pytest -m db 93 passed (ai_waiter_test) · общий прогон 711 passed, 3 skipped (scaled без Redis) · покрытие app/models и app/db 100% (кроме заглушки `can_transition` — #52) · alembic upgrade head / downgrade base / upgrade head / check — код 0
+
+## 🔒 Security
+**Verdict:** PASS. CRITICAL/HIGH/MEDIUM: 0; LOW: 1 (photo_path допускает схему/двоеточие внутри — нормализовать в сервисе выдачи фото); INFO: 2.
+Составные FK везде, CASCADE только для строк позиции, allergens_verified default false, CHECK photo_path против абсолютных путей и `..`.

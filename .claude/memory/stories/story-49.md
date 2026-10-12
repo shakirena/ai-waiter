@@ -27,3 +27,7 @@
 - Ревизия сгенерирована autogenerate, проверена вручную; комментарии autogenerate удалены.
 
 **Build:** ruff OK · ruff format OK · pytest -m "not db and not scaled" 545 passed · pytest -m db 49 passed (ai_waiter_test) · alembic upgrade head / downgrade base / upgrade head / check — код 0
+
+## 🔒 Security
+**Verdict:** PASS. CRITICAL/HIGH/MEDIUM: 0; LOW: 0; INFO: 2 (энтропия qr_token обеспечивается сервисом; RLS как defense-in-depth).
+Составные FK, глобальный UNIQUE и CHECK формата qr_token, ON DELETE RESTRICT, безопасный построитель CHECK — проверены.

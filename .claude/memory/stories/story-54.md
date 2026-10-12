@@ -35,3 +35,13 @@
 - HIGH — README.md:179–186 (PowerShell) и :189 (Linux): если в `.env` нет `TEST_DATABASE_URL` (в `.env.example` строка закомментирована), `.Matches[0]` падает, `DATABASE_URL` не задаётся, а следующие строки блока выполняются: `alembic downgrade base` идёт на рабочую БД из `.env`. Проверено в PS 5.1. Нужно сверять URL с `*_test` и запускать цикл одним условным блоком (или скриптом / pytest с `require_test_database_url()`). Исправить в этой ветке.
 - LOW — ревизия 0002 изменена задним числом. Допустимо, пока PR не влит; потом только новые ревизии.
 - INFO — CI: `contents: read`, actions по SHA, нет секретов и подстановок `${{ }}` в `run`, DATABASE_URL = одноразовая `ai_waiter_test`. Тест: bind-параметры, f-строки только с константой `PROBE`, откат транзакции, guard `*_test`. Новые индексы `(tenant_id, menu_item_id)` усиливают NFR-1, downgrade симметричен.
+
+### 🔒 Security — цикл 2
+
+**Verdict:** PASS (коммит bddcc25; комментарий в #54, метка `security:passed`, `security:failed` снята)
+**Файлы:** README.md (контекст: backend/tests/db/test_alembic.py, backend/tests/db/conftest.py)
+**Findings:** CRITICAL 0 · HIGH 0 · MEDIUM 0 · LOW 1 · INFO 1
+
+- HIGH из цикла 1 закрыт: ручной блок с `DATABASE_URL` и `alembic downgrade base` удалён. Цикл upgrade/downgrade/upgrade и `alembic check` выполняет `tests/db/test_alembic.py` через `config.attributes["database_url"]` под guard `*_test`. В README есть предупреждения о ручном `downgrade base` и о `skipped`.
+- LOW — ревизия 0002 изменена до слияния (без изменений).
+- INFO — блок в README помечен как `bash`, а путь в нём Windows-овский.

@@ -29,3 +29,12 @@
 - Роли сообщений — `user`/`assistant` (arch), не `tool`/`system` из текста issue.
 
 **Build:** ruff check OK · ruff format --check OK · pytest -m "not db and not scaled" 657 passed · pytest -m db 144 passed (ai_waiter_test) · общий прогон 801 passed, 3 skipped (scaled без Redis) · покрытие app/models/visit.py и checks.py 100% · alembic upgrade head / downgrade base / upgrade head / check — код 0
+
+## 🔒 Security
+
+**Verdict:** PASS. Файлы: backend/alembic/versions/0003_visits.py, backend/app/models/visit.py. Findings: CRITICAL 0, HIGH 0, MEDIUM 0, LOW 3, INFO 1.
+- Составные FK (tenant_id, table_id/visit_id/menu_item_id) исключают межарендные ссылки; `uq_visits_open_table` по глобально-уникальному `table_id` — корректен.
+- LOW: `messages.content` (jsonb) без ограничения размера (text ≤ 8000) — задать лимит в сервисе (#13).
+- LOW: `cart_items.comment` (≤ 200) — свободный текст гостя, может содержать ПДн; `redacted_at` его не обезличивает — учесть в очистке (#23).
+- LOW: CHECK `closed_state` не требует `closed_by_staff_id` при `closed_by='staff'` — проверять в сервисе.
+- INFO: `redacted_empty` + `content_or_redacted` корректно обезличивают; токены/стоимость сохраняются.

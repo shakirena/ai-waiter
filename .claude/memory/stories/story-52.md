@@ -26,3 +26,12 @@
 - `edited → edited` не считается переходом (статус тот же, пишется событие) — зафиксировано комментарием в enums.
 
 **Build:** ruff check OK · ruff format --check OK · pytest -m "not db and not scaled" 771 passed · pytest -m db 203 passed (ai_waiter_test) · общий прогон 974 passed, 3 skipped (scaled без Redis) · покрытие app/models 100% (order.py, enums.py, visit.py, checks.py) · alembic upgrade head / downgrade base / upgrade head / check — код 0
+
+## 🔒 Security
+
+**Verdict:** PASS. Файлы: backend/alembic/versions/0004_orders.py, backend/app/models/order.py, backend/app/models/enums.py. Findings: CRITICAL 0, HIGH 0, MEDIUM 0, LOW 3, INFO 2.
+- Составные FK у orders/order_items/order_events; `UNIQUE (tenant_id, idempotency_key)` — нет межарендного оракула; `op.execute` — только статический SQL; downgrade обратим.
+- LOW: триггер append-only не покрывает TRUNCATE (допустимо, ADR-7.6) — можно добавить statement-level BEFORE TRUNCATE; обход владельцем (DISABLE TRIGGER) принят.
+- LOW: `order_events.payload`, `order_items.comment`, `reject_reason` — свободный текст, неизменяемый журнал нельзя обезличить; не писать ПДн в payload (сервис #12/#14).
+- LOW: инвариант `orders.total` и переходы статусов (`can_transition`, escalated → edited) проверяются только сервисом, не БД — обязательны тесты сервиса.
+- INFO: lifecycle соответствует ТЗ 4.6 + утверждённый escalated → edited. Деньги NUMERIC(10,2), qty 1..99 — CHECK есть.

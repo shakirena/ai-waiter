@@ -24,12 +24,12 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import Base
-from app.models.enums import ActorType, OrderEventType, OrderStatus, VisitStatus
+from app.models.enums import ActorType, OrderEventType, OrderStatus, VisitClosedBy, VisitStatus
 from app.models.menu import Allergen, Category, MenuItem, MenuItemAllergen, MenuItemMeta, MenuItemPrice
 from app.models.order import Order, OrderEvent, OrderItem
 from app.models.reference import default_allergen_rows
@@ -268,6 +268,25 @@ async def _seed_visit(
 ) -> uuid.UUID:
     visit = data.VISIT
     table = data.table_by_token(visit.table_token)
+    # На столе может быть только один открытый визит (uq_visits_open_table). Чужой открытый визит
+    # на демо-столе закрываем, иначе переоткрытие демо-визита падает (#58). Системного значения
+    # в VisitClosedBy нет, ближайшее по смыслу — timeout.
+    visits = Visit.__table__
+    await session.execute(
+        update(visits)
+        .where(
+            visits.c.tenant_id == tenant_id,
+            visits.c.table_id == table_ids[visit.table_token],
+            visits.c.status == VisitStatus.OPEN.value,
+            visits.c.id != visit.id,
+        )
+        .values(
+            status=VisitStatus.CLOSED.value,
+            closed_at=func.now(),
+            closed_by=VisitClosedBy.TIMEOUT.value,
+            updated_at=func.now(),
+        )
+    )
     visit_id = await _upsert_id(
         session,
         Visit,

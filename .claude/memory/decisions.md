@@ -82,3 +82,24 @@
 **Reason:** NFR-1 spec #7, ADR-7.3, ADR-7.4, ADR-7.10; модельный тест не ловит миграцию, разошедшуюся с моделью в том, что не видит `alembic check`.
 **Applies to:** все будущие таблицы и ревизии (#16, #19, #22, #25).
 **Revisit when:** появится законная таблица заведения без `tenant_id` или колонка времени без часового пояса.
+
+## DEC-011: Единый путь синхронизации меню — `app/menu_sync`
+
+**Decision:** Любой источник меню (файл CSV/XLSX в #8, `PUT /integration/v1/menu` в #16) превращается в Pydantic-снимок `MenuSnapshot` (форма тела `PUT /menu`, ТЗ 4.4) и применяется только через `app.menu_sync.service.apply_menu_snapshot` в одной транзакции под `pg_try_advisory_xact_lock(8, hashtext(tenant_id::text))`; занят → `MenuSyncBusyError` (CLI код 3, API 409/503). Политика «всё или ничего»: любая ошибка — ничего не пишется, отчёт `MenuSyncReport` со списком `SyncIssue`. Пропавшие из снимка категории и позиции → `is_hidden`, вернувшиеся → `is_hidden=false`; тарифы, которых нет в снимке, удаляются; `is_available=None` — не менять; `menu_item_meta`/`menu_item_allergens` не трогаются; валюта ≠ валюте заведения → отказ всего снимка; ядро не округляет деньги. `PUT /stoplist` (#16) и ручной стоп-лист (#28) берут тот же lock. EventBus-событий о синхронизации нет (CLI — отдельный процесс): меню гостя и ИИ читают БД, без кеша в памяти процесса. Границы: `app/menu_sync/files` без SQLAlchemy, `openpyxl` только в `files/xlsx_reader.py`, пакет не импортирует `fastapi`/`app.api`.
+**Reason:** docs/arch/feature-8-menu-import.md ADR-8.1–8.4, 8.6; ТЗ 4.2 (файловый импорт — вид коннектора), INT-1, INT-2.
+**Applies to:** #61 (снимок, `check_snapshot`), #62 (`plan_menu_sync`, `apply_menu_snapshot`, lock), #64, #65 (`files`, границы), #66 (CLI); #16 (`PUT /menu`, `PUT /stoplist`), #10, #11, #12 (скрытые/недоступные позиции при оформлении), #28.
+**Revisit when:** появится кеш меню в процессе или частичные (дельта) обновления меню.
+
+## DEC-012: Журнал `menu_sync_runs` — источник хеша и времени синхронизации меню
+
+**Decision:** Таблица `menu_sync_runs` (ревизия `0005`, владелец — #63; #62 работает без журнала, #63 добавляет пропуск по хешу и запись журнала без смены сигнатуры `apply_menu_snapshot`): `source` (`file`/`connector`), `source_ref` (имя файла без пути), `status` (`applied`/`unchanged`/`rejected`), `snapshot_hash` (SHA-256 канонического снимка), `started_at`/`finished_at`, `counts`/`issues` jsonb. Пропуск по хешу (INT-1) — сравнение с последним `applied`/`unchanged` заведения любого источника; `unchanged` тоже журналируется (для INT-4/FR-20). Отклонённые снимки журналируются отдельной транзакцией; пробный прогон — нет. Уточняет ADR-7.7: `connectors.last_menu_hash`/`last_menu_sync_at` не создаются, #16 добавляет `menu_sync_runs.connector_id` (составной FK). Очистка старых строк — #23.
+**Reason:** ADR-8.5; у файлового импорта нет ключа/записи коннектора, а FR-20 нужна история ошибок любого источника.
+**Applies to:** #63, #66, #16, #23 (алерт `menu_stale_alert_min`, очистка), #29 (FR-20 в админке).
+**Revisit when:** пользователь не утвердит уточнение ADR-7.7 (открытый вопрос 1 arch #8).
+
+## DEC-013: Деньги в Pydantic-схемах — `app.schemas.money.MoneyStr`
+
+**Decision:** Денежные поля API и снимков — `MoneyStr` (`Annotated[Decimal, …]` из `app/schemas/money.py`, story #61): на входе `str`/`Decimal`/`int`, `float` (JSON-число) отвергается, ≤ 2 знаков после точки без округления, 0…99999999.99; в JSON — строка с двумя знаками (`"8.50"`). Не путать с `app.db.base.Money` (тип колонки `NUMERIC(10,2)`).
+**Reason:** CLAUDE.md «Деньги», ADR-7.4 («общий тип Money появляется в #10/#12» — появляется раньше, в #8).
+**Applies to:** #61 (вводит тип), #64/#65 (деньги из файла), #10, #12, #16, #17 и любые схемы с деньгами.
+**Revisit when:** дробные количества/цены за вес (открытый вопрос 4 #7).

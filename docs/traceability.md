@@ -1,11 +1,12 @@
 # Traceability Matrix
 
-*Last updated: 2026-10-13 (doc-sync после фазы тестирования feature #7)*
+*Last updated: 2026-10-13 (doc-sync после фазы анализа feature #8)*
 
 | Feature | Story | ТЗ | Spec | Arch | Code (router/service) | Tests | TC Doc | Status |
 |---------|-------|----|------|------|------------------------|-------|--------|--------|
 | #6 Каркас проекта | #37, #38, #39, #40, #41, #42, #43, #44, #45 | раздел 8, 9.1–9.3, NFR-2, NFR-3, NFR-4, NFR-7 | docs/specs/feature-6-project-scaffold.md | docs/arch/feature-6-project-scaffold.md | backend/app/ (api, core, tasks, web), frontend/ | backend/tests/test_*.py, frontend/src/**/*.test.ts* | docs/test-cases/feature-37..45-*.md, docs/test-cases/traceability-tc.md | ✅ ready-to-deploy |
 | #7 Модель данных v1 | #48, #49, #50, #51, #52, #53, #54, #56 | раздел 7, 3.1–3.4 (FR-1…FR-21), 4.4–4.6 (INT-1…INT-7), 5 (AI-2), NFR-3, NFR-4, NFR-5, NFR-8, 9.2 | docs/specs/feature-7-data-model.md | docs/arch/feature-7-data-model.md | backend/app/db/, backend/app/models/, backend/app/seed/, backend/app/api/health.py, backend/alembic/ (0001–0004), backend/alembic.ini, .github/workflows/ci.yml | backend/tests/test_db_*.py, test_alembic_setup.py, test_models_metadata.py, test_migrations_offline.py, test_ids.py, test_order_status.py, test_seed.py, test_seed_loader.py, test_health.py, test_repo_artifacts.py, test_config.py, test_qa_coverage_gaps.py; backend/tests/db/*.py | docs/test-cases/feature-48..56-*.md (57 TC), docs/test-cases/traceability-tc.md | stories: ✅ ready-to-deploy (G5 PASS 2026-10-13); feature: 🧪 testing (PR #57); дефект #58 |
+| #8 Импорт меню из CSV/XLSX (файловый коннектор) | #61, #62, #63, #64, #65, #66, #67 | 1, 3.3 (FR-16, FR-17, FR-20), 4.2, 4.4, 4.5 (INT-1, INT-2; INT-3, INT-4 — потребители), 5 (AI-3), 6 (NFR-4, NFR-6, NFR-8), 9.2, приложение A.1–A.2, B (C-07) | docs/specs/feature-8-menu-import.md (FR-1…FR-8, NFR-1…NFR-10, AC-1…AC-7) | docs/arch/feature-8-menu-import.md (ADR-8.1…ADR-8.8) | заглушки: backend/app/menu_sync/ (snapshot, report, plan, service, files/, `__main__`), backend/app/schemas/money.py, backend/app/models/menu_sync.py, backend/app/models/enums.py (`MenuSyncSource`, `MenuSyncStatus`), backend/tests/fixtures/menu/menu_valid.csv, .gitignore (`local-data/`); предстоит: backend/alembic/versions/0005_menu_sync_runs.py; касса: `php yii ai-export-menu` | — (план тестов — arch, раздел «Файлы и тесты по story») | — | 📋 ready-for-dev (G1/G2 пройдены) |
 
 ## Детализация feature #7 по stories
 
@@ -21,6 +22,20 @@
 | #56 | проверка БД в `/health/ready` | spec, открытый вопрос 19 | ADR-7.9, API Contracts | backend/app/api/health.py, README.md | tests/test_health.py, test_db_session.py, tests/db/test_health_db.py | docs/test-cases/feature-56-health-db.md: TC-56-001…TC-56-004 | ready-to-deploy (G5 PASS, qa:passed) |
 
 Все пути тестов — относительно `backend/`. Ревизии Alembic: `0001` (#49) → `0002` (#50) → `0003` (#51) → `0004` (#52). Пофайловая привязка каждого TC к тестам и результат прогона — в `docs/test-cases/traceability-tc.md`.
+
+## Детализация feature #8 по stories
+
+| Story | Содержание | ТЗ | Spec | Arch | Код (заглушки) | Тесты (план) | TC | Статус |
+|-------|-----------|----|------|------|----------------|--------------|----|--------|
+| #61 | снимок меню `MenuSnapshot`, `MoneyStr`, `check_snapshot`, `parse_snapshot`, `resolve_currency`, `IssueCode` | 4.4, INT-1, INT-2 | FR-1, NFR-4, NFR-10, AC-1 | ADR-8.1, 8.2 (лимиты), 8.3 (валюта); DEC-011, DEC-013 | backend/app/schemas/`__init__`.py, money.py; backend/app/menu_sync/`__init__`.py, snapshot.py (кроме `snapshot_hash`), report.py | tests/test_money.py, test_menu_snapshot.py, граница «`app.menu_sync` без `fastapi`» | — | kanban:ready-for-dev |
+| #62 | план и применение снимка по `external_id`, скрытие пропавших, lock, «всё или ничего», `mass_hide`, `--dry-run` | INT-2, FR-16, FR-17, 4.4 | FR-2, FR-3, NFR-1, NFR-2, NFR-3, NFR-5, AC-2 | ADR-8.3, 8.4 | backend/app/menu_sync/plan.py, service.py (шаги 1, 2, 4, 5) | tests/test_menu_plan.py; tests/db/test_menu_sync_apply.py | — | kanban:ready-for-dev |
+| #63 | журнал `menu_sync_runs`, `snapshot_hash`, пропуск по хешу (`unchanged`), `--force`, `record_rejected_run` | INT-1, FR-20, INT-4, NFR-6 | FR-4, NFR-8, AC-3 | ADR-8.5; DEC-009, DEC-010 | backend/app/models/menu_sync.py (в `app/models/__init__.py` не подключена), backend/app/models/enums.py (`MenuSyncSource`, `MenuSyncStatus`), snapshot.py (`snapshot_hash`), service.py (`last_applied_hash`, `record_rejected_run`, шаги 3, 6); предстоит backend/alembic/versions/0005_menu_sync_runs.py | unit — хеш; дополнения test_models_metadata.py, test_migrations_offline.py, tests/db/test_migrations.py; tests/db/test_menu_sync_runs.py | — | kanban:ready-for-dev |
+| #64 | формат файла, разбор CSV, построчный отчёт ошибок, синтетический пример | 4.2, INT-2 | FR-5, NFR-6, NFR-7, NFR-9, AC-4 | ADR-8.2 | backend/app/menu_sync/files/`__init__`.py, format.py, csv_reader.py; backend/tests/fixtures/menu/menu_valid.csv | unit-тесты CSV и заголовка; граница «`files` без `sqlalchemy`/`app.db`» | — | kanban:ready-for-dev |
+| #65 | разбор XLSX (`openpyxl`, `defusedxml`), защита от zip-бомбы | 4.2 | FR-6, NFR-6, NFR-7, AC-5 | ADR-8.2, 8.7 | backend/app/menu_sync/files/xlsx_reader.py; предстоит pyproject.toml + uv.lock, ruff `banned-api` | unit XLSX (книги собираются в тесте), `DEFUSEDXML is True` | — | kanban:ready-for-dev |
+| #66 | CLI `python -m app.menu_sync check` / `import`, коды выхода 0/1/2/3, README «Импорт меню» | 4.2, 9.2 | FR-7, NFR-7, NFR-8, AC-6 | ADR-8.6 | backend/app/menu_sync/`__main__`.py; предстоит README | tests/test_menu_sync_cli.py; tests/db/test_menu_sync_cli.py | — | kanban:ready-for-dev |
+| #67 | выгрузка меню кассы «restoran»: `php yii ai-export-menu <file.csv>` (метка `connector`) | A.2, C-07 | FR-8, NFR-9, AC-7 | ADR-8.8 | в ai-waiter — только .gitignore (`local-data/`) и инструкция; в репозитории кассы — commands/AiExportMenuController.php, `MenuSnapshotBuilder` | касса: тесты округления, `price_vip`, `disabled`; ручная приёмка `check` и `import --dry-run` | — | kanban:ready-for-dev |
+
+Пути тестов — относительно `backend/`. Порядок: #61 → (#62 ∥ #64) → #63 и #65 → #66 → #67. Ревизия Alembic фичи одна: `0005_menu_sync_runs` (#63, `down_revision = "0004"`). Статусы журнала: `applied` / `unchanged` / `rejected`; коды CLI: 0 — успех, 1 — окружение, 2 — данные, 3 — lock занят.
 
 ## Требования feature #7 → TC → тесты
 

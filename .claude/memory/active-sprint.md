@@ -6,7 +6,20 @@
 
 ## Ready for Dev
 
-*(пусто)*
+### Группа feature #8: импорт меню из CSV/XLSX (G2 PASS 2026-10-13)
+
+| # | История | size | priority | Зависит от |
+|---|---|---|---|---|
+| #61 | Снимок меню: модель с проверкой согласованности (`MoneyStr`, `MenuSnapshot`, `check_snapshot`) | m | high | — |
+| #62 | Применение снимка меню к базе по external_id со скрытием пропавших позиций | l | high | #61 |
+| #63 | Журнал синхронизаций меню с пропуском неизменённого снимка (`menu_sync_runs`, ревизия 0005) | m | high | #62 |
+| #64 | Разбор CSV-файла меню в снимок с построчным отчётом ошибок | m | high | #61 |
+| #65 | Разбор XLSX-файла меню в снимок (openpyxl, defusedxml) | m | medium | #64 |
+| #66 | CLI-команда импорта меню из файла с режимом --dry-run (`python -m app.menu_sync`) | m | high | #63, #64 |
+| #67 | Выгрузка меню кассы «restoran» в файл импорта (`php yii ai-export-menu`, код в репозитории кассы) | m | high | #64; проверка — #66 |
+
+Порядок: #61 → (#62 ∥ #64) → #63, #65 → #66 → #67. Spec: docs/specs/feature-8-menu-import.md; arch: docs/arch/feature-8-menu-import.md (ADR-8.1…8.8, DEC-011…013). Ветка анализа: feature/8-menu-import.
+До начала #62 и #63 пользователь подтверждает открытые вопросы spec: «всё или ничего»; хранение хеша в `menu_sync_runs` вместо `connectors.last_menu_hash` (уточняет ADR-7.7); защиту от массового скрытия. #67 нужны данные кассы: в дампе `restoran(3).sql` нет строк `menu`.
 
 ## In Development (WIP: 0/5)
 

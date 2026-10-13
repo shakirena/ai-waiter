@@ -395,7 +395,7 @@ QR-коды остаются прежними. Службы ai-waiter, PostgreSQ
 | категория: `external_id`, `name`, `sort_key` | `type.id`, `type.name`, `type.vid` |
 | позиция: `external_id`, `name`, `sort_key`, `station` | `menu.id`, `menu.name`, `menu.vid`, `store.name` через `menu.id_store` |
 | `prices.default` / `prices.vip` | `menu.price` / `menu.price_vip` (если больше 0, иначе `vip` не передаётся и берётся `default`) |
-| `is_available` | `menu.disabled = 0` |
+| позиция в меню | только `menu.disabled = 0`; позиции с `disabled = 1` сняты с продажи и не передаются (ядро их скрывает) |
 | стол: `external_id`, `name`, зал | `place.id`, `place.name`, `type_place.name` |
 | `confirmed_by.pos_user_ref` | `users.id_user` официанта, указанный в его профиле ИИ-официанта |
 

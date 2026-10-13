@@ -120,6 +120,21 @@ class Lang(StrEnum):
     RU = "ru"
 
 
+class MenuSyncSource(StrEnum):
+    """Откуда пришёл снимок меню (``menu_sync_runs.source``, #8, ADR-8.5)."""
+
+    FILE = "file"  # файловый импорт CSV/XLSX (CLI, позже — загрузка в админке)
+    CONNECTOR = "connector"  # PUT /integration/v1/menu (#16)
+
+
+class MenuSyncStatus(StrEnum):
+    """Итог синхронизации меню (``menu_sync_runs.status``, ADR-8.5). Пробный прогон не записывается."""
+
+    APPLIED = "applied"  # снимок применён
+    UNCHANGED = "unchanged"  # хеш совпал с последним применённым — ничего не пересчитывалось (INT-1)
+    REJECTED = "rejected"  # ошибки в данных — ничего не записано («всё или ничего», ADR-8.4)
+
+
 DEFAULT_PRICE_TIER: Final[str] = "default"
 # CHECK для price_tier: строчные латинские буквы, цифры, «_»; до 32 символов.
 PRICE_TIER_PATTERN: Final[str] = r"^[a-z][a-z0-9_]{0,31}$"

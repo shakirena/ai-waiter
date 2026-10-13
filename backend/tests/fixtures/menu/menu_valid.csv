@@ -1,0 +1,10 @@
+category_external_id,category_name,category_sort_key,external_id,name,price_default,price_vip,currency,station,sort_key,is_available
+10,Salatlar,10,007,Çoban salatı,4.50,5.50,AZN,Mətbəx,10001,1
+10,Salatlar,10,008,Paytaxt salatı,6,7.00,,Mətbəx,10002,1
+10,Salatlar,10,009,"Qarışıq göyərti, limon",3.20,,AZN,Mətbəx,10003,0
+20,İsti yeməklər,20,101,Dolma,8.00,10.00,AZN,Mətbəx,20001,1
+20,İsti yeməklər,20,102,Lülə kabab,9.50,11.50,AZN,Manqal,20002,1
+20,İsti yeməklər,20,103,Toyuq şişlik,7.80,,AZN,Manqal,20003,true
+30,İçkilər,30,201,Ayran,1.50,2.00,AZN,Bar,30001,yes
+30,İçkilər,30,202,Çay (dəmlik),3,4,AZN,Bar,30002,1
+30,İçkilər,30,203,Limonad ev üsulu,2.80,,,Bar,30003,no

@@ -15,6 +15,7 @@ from decimal import Decimal
 
 import pytest
 from sqlalchemy import func, make_url, select, text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -28,7 +29,7 @@ from app.models.visit import CartItem, Message, Visit
 from app.seed import data
 from app.seed.loader import SeedError, apply_seed
 from tests.db.conftest import alembic_command, reset_schema, run_in_thread
-from tests.db.factories import create_table, create_tenant
+from tests.db.factories import add, build_visit, create_order, create_table, create_tenant, create_visit
 
 pytestmark = pytest.mark.db
 
@@ -187,6 +188,51 @@ async def test_seed_does_not_touch_foreign_table_with_same_token(db_session: Asy
 
     table = (await db_session.scalars(select(Table).where(Table.qr_token == data.TABLES[0].qr_token))).one()
     assert (table.tenant_id, table.name) == (other.id, "Чужой стол")
+
+
+async def test_seed_attaches_lines_to_existing_order_with_same_idempotency_key(db_session: AsyncSession) -> None:
+    """Заказ с ключом идемпотентности сида уже есть (другой id, другой визит): сид его не
+    дублирует и не меняет, строки и событие ``created`` ссылаются на него; повтор ничего не добавляет."""
+    await create_tenant(db_session, id=data.DEMO_TENANT_ID, name="Demo Restoran")
+    visit = await create_visit(db_session, data.DEMO_TENANT_ID)
+    existing = await create_order(
+        db_session, data.DEMO_TENANT_ID, visit.id, idempotency_key=data.ORDER.idempotency_key, total=Decimal("1.00")
+    )
+    existing_id, visit_id = existing.id, visit.id
+    assert existing_id != data.ORDER.id
+
+    await apply_seed(db_session)
+    first = await row_counts(db_session)
+    await apply_seed(db_session)
+    assert await row_counts(db_session) == first
+    db_session.expire_all()
+
+    order = (await db_session.scalars(select(Order))).one()
+    assert (order.id, order.visit_id, order.total) == (existing_id, visit_id, Decimal("1.00"))
+    lines = (await db_session.scalars(select(OrderItem))).all()
+    assert {line.id for line in lines} == {line.id for line in data.ORDER.lines}
+    assert {line.order_id for line in lines} == {existing_id}
+    event = (await db_session.scalars(select(OrderEvent))).one()
+    assert (event.id, event.order_id) == (data.ORDER.created_event_id, existing_id)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=IntegrityError,
+    reason=(
+        "Дефект: повторный сид падает на uq_visits_open_table, если демо-визит закрыт, а на столе "
+        "«Стол 1» открыт другой визит (обычная ситуация после работы с приложением в dev)"
+    ),
+)
+async def test_seed_rerun_when_demo_table_has_another_open_visit(db_session: AsyncSession) -> None:
+    await apply_seed(db_session)
+    await db_session.execute(update(Visit).values(status=VisitStatus.CLOSED, closed_at=func.now(), closed_by="staff"))
+    table_id = await db_session.scalar(select(Table.id).where(Table.qr_token == data.VISIT.table_token))
+    assert table_id is not None
+    await add(db_session, build_visit(data.DEMO_TENANT_ID, table_id))
+
+    async with db_session.begin_nested():
+        await apply_seed(db_session)
 
 
 # ---------------------------------------------------------------- python -m app.seed с фиксацией

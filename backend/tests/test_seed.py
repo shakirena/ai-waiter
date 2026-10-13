@@ -8,6 +8,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import re
+import runpy
 import subprocess
 import sys
 import uuid
@@ -348,3 +349,17 @@ def test_module_entry_point_refuses_prod_in_subprocess() -> None:
     )
     assert result.returncode == 2, result.stderr
     assert "APP_ENV=prod" in result.stderr
+
+
+@pytest.mark.filterwarnings("ignore:.*found in sys.modules.*:RuntimeWarning")
+def test_module_guard_raises_system_exit_with_main_code(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Блок ``if __name__ == "__main__"`` в том же процессе (видит покрытие): код ``main`` уходит в
+    ``SystemExit``. Отказ при ``APP_ENV=prod`` наступает до подключения к БД."""
+    monkeypatch.setenv("APP_ENV", "prod")
+    monkeypatch.setattr(sys, "argv", ["python -m app.seed"])
+    with pytest.raises(SystemExit) as info:
+        runpy.run_module("app.seed", run_name="__main__", alter_sys=True)
+    assert info.value.code == seed_cli.EXIT_PROD_FORBIDDEN
+    assert "APP_ENV=prod" in capsys.readouterr().err

@@ -285,7 +285,7 @@ python -m app.menu_sync import FILE --tenant UUID [--dry-run] [--force] [--allow
 | `price_vip` | `menu.price_vip`, если `> 0`; `NULL`/`≤ 0` → пустая ячейка (тарифа нет) |
 | `currency` | пусто (валюта заведения, A.1: AZN) |
 | `station` | `store.name` через `menu.id_store` (`LEFT JOIN`; нет склада — пусто) |
-| `is_available` | `menu.disabled` = 0 или `NULL` → `1`, иначе `0` |
+| строка в файле | только `menu.disabled` = 0 или `NULL`; позиции с `disabled = 1` не выгружаются, синхронизация их скрывает (решение пользователя 2026-10-13). Колонка `is_available` не выгружается: наличие не трогается (решение по вопросу 4) |
 
 Файл пишется `fputcsv` в UTF-8 без BOM, разделитель `,`, первая строка — заголовок. Проверка — `python -m app.menu_sync check <file>` (без БД).
 

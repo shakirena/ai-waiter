@@ -25,7 +25,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from sqlalchemy import Delete, Insert, Select
+from sqlalchemy import Delete, Insert, Select, Update
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -73,8 +73,10 @@ class FakeDatabase:
             call = Call("select", "orders", sql, dict(compiled.params), self.existing_order_id)
             result.scalar_one.return_value = self.existing_order_id
         else:
-            kind = "insert" if isinstance(statement, Insert) else "delete"
-            assert isinstance(statement, Insert | Delete), type(statement)
+            assert isinstance(statement, Insert | Delete | Update), type(statement)
+            kind = (
+                "insert" if isinstance(statement, Insert) else "delete" if isinstance(statement, Delete) else "update"
+            )
             table = statement.table.name  # type: ignore[union-attr]
             returned = None
             if "RETURNING" in sql and table not in self.foreign:
@@ -171,6 +173,7 @@ def test_statement_count_matches_dataset(database: FakeDatabase) -> None:
         ("insert", "menu_item_meta"): len(data.DISHES),
         ("delete", "menu_item_allergens"): len(data.DISHES),
         ("insert", "menu_item_allergens"): sum(len(dish.allergens) for dish in data.DISHES),
+        ("update", "visits"): 1,
         ("insert", "visits"): 1,
         ("insert", "messages"): len(data.VISIT.messages),
         ("insert", "cart_items"): len(data.VISIT.cart),
@@ -187,6 +190,20 @@ def test_statement_count_matches_dataset(database: FakeDatabase) -> None:
     second = FakeDatabase()
     asyncio.run(_seed(second))
     assert [(c.kind, c.table, c.sql) for c in second.calls] == [(c.kind, c.table, c.sql) for c in database.calls]
+
+
+def test_other_open_visit_on_demo_table_is_closed_before_demo_visit(database: FakeDatabase) -> None:
+    """#58: перед переоткрытием демо-визита закрывается чужой открытый визит на том же столе,
+    только в демо-заведении и не сам демо-визит."""
+    (closing,) = database.of("visits", "update")
+    (upsert,) = database.of("visits")
+    assert database.calls.index(closing) < database.calls.index(upsert)
+    where = closing.sql.split(" WHERE ", 1)[1]
+    for column in ("visits.tenant_id =", "visits.table_id =", "visits.status =", "visits.id !="):
+        assert column in where, where
+    assert data.VISIT.id in closing.params.values()
+    assert VisitStatus.OPEN.value in closing.params.values()
+    assert {"closed", "timeout"} <= set(closing.params.values())
 
 
 # ---------------------------------------------------------------- идемпотентность (ADR-7.12)

@@ -135,8 +135,8 @@ Security review (LOW): защита проверяет `APP_ENV` локальн�
 **Type:** Negative (идемпотентность в реальном dev-сценарии)
 **AC:** AC-6 (повторный запуск не меняет данные и не падает)
 **E2E Automated:** No
-**Автоматизация:** Авто — `tests/db/test_seed.py::test_seed_rerun_when_demo_table_has_another_open_visit` (помечен `xfail(strict=True, raises=IntegrityError)` как известный дефект; добавлен tester 2026-10-13).
-**Статус прогона:** FAIL (дефект подтверждён тестом: xfail срабатывает; задача #58)
+**Автоматизация:** Авто — `tests/db/test_seed.py::test_seed_rerun_when_demo_table_has_another_open_visit` (добавлен tester 2026-10-13; после исправления #58 маркер `xfail` снят).
+**Статус прогона:** PASS (дефект #58 исправлен: сид закрывает чужой открытый визит на демо-столе с `closed_by = timeout`)
 
 ### Preconditions
 - Сид уже загружен.

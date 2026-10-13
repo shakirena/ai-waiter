@@ -15,7 +15,6 @@ from decimal import Decimal
 
 import pytest
 from sqlalchemy import func, make_url, select, text, update
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -216,23 +215,25 @@ async def test_seed_attaches_lines_to_existing_order_with_same_idempotency_key(d
     assert (event.id, event.order_id) == (data.ORDER.created_event_id, existing_id)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=IntegrityError,
-    reason=(
-        "Дефект #58: повторный сид падает на uq_visits_open_table, если демо-визит закрыт, а на столе "
-        "«Стол 1» открыт другой визит (обычная ситуация после работы с приложением в dev)"
-    ),
-)
 async def test_seed_rerun_when_demo_table_has_another_open_visit(db_session: AsyncSession) -> None:
+    """#58: чужой открытый визит на демо-столе закрывается, демо-визит снова открыт."""
     await apply_seed(db_session)
     await db_session.execute(update(Visit).values(status=VisitStatus.CLOSED, closed_at=func.now(), closed_by="staff"))
     table_id = await db_session.scalar(select(Table.id).where(Table.qr_token == data.VISIT.table_token))
     assert table_id is not None
-    await add(db_session, build_visit(data.DEMO_TENANT_ID, table_id))
+    other = build_visit(data.DEMO_TENANT_ID, table_id)
+    await add(db_session, other)
 
     async with db_session.begin_nested():
         await apply_seed(db_session)
+
+    rows = (
+        await db_session.execute(select(Visit.id, Visit.status, Visit.closed_by).where(Visit.table_id == table_id))
+    ).all()
+    by_id = {row.id: row for row in rows}
+    assert by_id[data.VISIT.id].status == VisitStatus.OPEN
+    assert (by_id[other.id].status, by_id[other.id].closed_by) == (VisitStatus.CLOSED, "timeout")
+    assert sum(row.status == VisitStatus.OPEN for row in rows) == 1
 
 
 # ---------------------------------------------------------------- python -m app.seed с фиксацией

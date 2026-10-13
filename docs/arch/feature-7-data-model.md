@@ -213,7 +213,7 @@ CREATE TRIGGER trg_order_events_append_only BEFORE UPDATE OR DELETE ON order_eve
 - **Идемпотентность:** заведение с фиксированным UUID `DEMO_TENANT_ID`; всё остальное — `INSERT … ON CONFLICT (естественный ключ) DO UPDATE`: аллергены по `(tenant_id, code)`, залы по `(tenant_id, name)`, столы по `qr_token`, категории и позиции по `(tenant_id, external_id)`, цены по `(menu_item_id, price_tier)`, мета по `menu_item_id`. Повторный запуск не плодит дублей и возвращает эталонные значения. Одна транзакция.
 - **Данные вымышленные:** заведение «Demo Restoran», валюта AZN, часовой пояс `Asia/Baku`; 2 зала, 6 столов (один кабинет с тарифом `vip`, один неактивный) с детерминированными dev-токенами (`demo-table-01-…`, ≥ 22 символов, только для разработки — поэтому запрет в prod); 14 аллергенов ЕС с названиями AZ/RU; 4 категории, ~15 блюд с ценами `default`/`vip`; часть блюд с `allergens_verified = true` и списком аллергенов, часть — без флага (проверка AI-2), одно `is_hidden`, одно `is_available = false`. Без IP-адресов, ключей, реальных названий и цен заведения. Данные — Python-модуль `app/seed/data.py` (не файлы по путям — переносимость).
 - В конце печатает относительные ссылки `/t/{token}` для локальной проверки.
-- Тесты: `tests/db/test_seed.py` — два запуска подряд → одинаковые счётчики строк, полный набор данных, возврат к эталонным значениям, защита чужого стола, пароль не показывается; `tests/test_seed.py` (без БД) — корректность `app/seed/data.py`, CLI и отказ при `APP_ENV=prod` (код 2) до чтения остальной конфигурации.
+- Тесты: `tests/db/test_seed.py` — два запуска подряд → одинаковые счётчики строк, полный набор данных, возврат к эталонным значениям, защита чужого стола, пароль не показывается; `tests/test_seed.py` (без БД) — корректность `app/seed/data.py`, CLI и отказ при `APP_ENV=prod` (код 2) до чтения остальной конфигурации. `tests/test_seed_loader.py` (без БД, G5) — контракт загрузчика на `AsyncMock`: порядок запросов, `ON CONFLICT` по естественным ключам, `SeedError` на чужих строках. Известный дефект #58: повторный сид при закрытом демо-визите и другом открытом визите на демо-столе нарушает `uq_visits_open_table` (TC-53-007, тест `xfail(strict=True)`).
 
 ---
 
@@ -795,7 +795,8 @@ backend/tests/test_models_metadata.py     # без БД: инварианты me
 backend/tests/test_migrations_offline.py  # без БД: alembic upgrade head --sql, линейная цепочка, проверка кодировки
 backend/tests/test_ids.py                 # без БД: UUIDv7 (версия, вариант, монотонность по времени)
 backend/tests/test_order_status.py        # без БД: ORDER_TRANSITIONS, can_transition (матрица 8 × 8)
-backend/tests/test_seed.py                # без БД: app.seed.data, CLI, отказ при APP_ENV=prod
+backend/tests/test_seed.py                # без БД: app.seed.data, CLI, отказ при APP_ENV=prod, точка входа модуля (runpy)
+backend/tests/test_seed_loader.py         # без БД: app.seed.loader на AsyncMock — порядок запросов, ON CONFLICT по естественным ключам, защита чужих строк, RETURNING id (G5)
 backend/tests/test_repo_artifacts.py      # без БД: шаги alembic в CI до pytest
 backend/tests/db/__init__.py
 backend/tests/db/conftest.py              # TEST_DATABASE_URL, guard *_test, migrated_database, db_session
@@ -809,7 +810,7 @@ backend/tests/db/test_visits.py           # AC-4: один open-визит на 
 backend/tests/db/test_orders.py           # AC-5: idempotency_key, статусы, снимки, триггер order_events
 backend/tests/db/test_tenant_isolation.py # межарендный FK отвергается БД
 backend/tests/db/test_schema_invariants.py # AC-7: tenant_id, NUMERIC(10,2), timestamptz на реальной схеме (DEC-010)
-backend/tests/db/test_seed.py             # AC-6: идемпотентность, полный набор данных
+backend/tests/db/test_seed.py             # AC-6: идемпотентность, полный набор данных; сид поверх заказа с тем же idempotency_key; xfail(strict) повторного сида при другом открытом визите (дефект #58, TC-53-007)
 backend/tests/db/test_health_db.py        # #56: /health/ready с настоящим PostgreSQL
 .env.example                      # DATABASE_URL обязателен; DB_POOL_SIZE, DB_MAX_OVERFLOW; TEST_DATABASE_URL (закомментирован)
 .github/workflows/ci.yml          # backend-services: POSTGRES_DB ai_waiter_test, TEST_DATABASE_URL; CLI alembic upgrade/downgrade/upgrade/check до pytest (#54)
@@ -817,7 +818,7 @@ deploy/docker-compose.yml         # сервис migrate (x-app, alembic upgrade
 README.md                         # создание роли и БД на Windows/Linux, миграции, сид, db-тесты
 ```
 
-Список тестов приведён к фактическому состоянию после разработки (doc-sync 2026-10-12): вместо задуманных `test_enums.py`, `test_check_constraints.py`, `test_constraints.py` проверки разложены по `test_order_status.py`, `test_migrations.py` и тестам по группам таблиц (`test_tenants_tables.py`, `test_menu.py`, `test_visits.py`, `test_orders.py`).
+Список тестов приведён к фактическому состоянию после разработки (doc-sync 2026-10-12); после фазы тестирования (doc-sync 2026-10-13) добавлены `tests/test_seed_loader.py` и два db-теста сида в `tests/db/test_seed.py` — `test_seed_attaches_lines_to_existing_order_with_same_idempotency_key` и `test_seed_rerun_when_demo_table_has_another_open_visit` (xfail, #58). Вместо задуманных `test_enums.py`, `test_check_constraints.py`, `test_constraints.py` проверки разложены по `test_order_status.py`, `test_migrations.py` и тестам по группам таблиц (`test_tenants_tables.py`, `test_menu.py`, `test_visits.py`, `test_orders.py`).
 
 Раскладка отличается от предварительной пометки в arch #6 (`app/core/db.py`): слой БД — отдельный пакет `app/db/`, модели — `app/models/` по доменам, потому что модулей больше одного и `app/core` отведён под инфраструктурные интерфейсы режимов.
 

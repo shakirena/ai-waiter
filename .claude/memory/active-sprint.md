@@ -12,10 +12,18 @@
 
 *(пусто)*
 
-## In Testing (WIP: 8/5 — одна feature #7, тестируется единым PR)
+## In Testing (WIP: 0/5)
 
-Задача #7 (модель данных v1): истории #48, #49, #50, #51, #52, #53, #54, #56 — kanban:testing, G3, G4 и security review пройдены. Код: ветка feature/7-data-model, PR #57 (в main не влит). Doc-sync после разработки выполнен 2026-10-12 (docs/traceability.md, словарь данных и список тестов в docs/arch/feature-7-data-model.md). Следующий шаг — /test (G5): TC-документация по AC-1…AC-7 и #56, unit-тесты, прогон `-m db` на `ai_waiter_test`.
-Важно: ревизия 0002 изменена в #54 (индексы `(tenant_id, menu_item_id)`) — локальные БД, поднятые старой 0002, пересоздать перед прогоном db-тестов (story-54.md).
+*(пусто по историям)* Родительская feature #7 остаётся в kanban:testing — её метки на G5 не менялись; закрывается вместе с влитием PR #57.
+
+## Ready to Deploy (группа feature #7)
+
+#48, #49, #50, #51, #52, #53, #54, #56 — kanban:ready-to-deploy, qa:passed (G5 PASS 2026-10-13), G3, G4 и security review пройдены ранее. Код: ветка feature/7-data-model, PR #57 (в main не влит). TC: docs/test-cases/feature-48…56-*.md (57 TC: PASS 55, FAIL 1 — TC-53-007, дефект #58; не выполнен 1 — TC-53-006, ручная проверка AZ-названий носителем). Финальный прогон: с db — 1053 passed, 3 skipped, 1 xfailed; без db — 830 passed, 3 skipped; покрытие `app` 100%. Doc-sync после тестирования выполнен 2026-10-13 (docs/traceability.md, список тестов в docs/arch/feature-7-data-model.md).
+Для G6: ревизия 0002 изменена в #54 — локальные БД, поднятые старой 0002, пересоздать (story-54.md); ручная проверка TC-53-006 до показа демо заведению.
+
+## Backlog
+
+- #58 (bug, #53 сид) — повторный `python -m app.seed` падает на `uq_visits_open_table`, если демо-визит закрыт, а на демо-столе открыт другой визит. TC-53-007, тест `tests/db/test_seed.py::test_seed_rerun_when_demo_table_has_another_open_visit` (xfail strict — снять при исправлении).
 
 ## Ready to Deploy (группа feature #6)
 

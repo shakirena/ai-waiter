@@ -220,7 +220,7 @@ async def test_seed_attaches_lines_to_existing_order_with_same_idempotency_key(d
     strict=True,
     raises=IntegrityError,
     reason=(
-        "Дефект: повторный сид падает на uq_visits_open_table, если демо-визит закрыт, а на столе "
+        "Дефект #58: повторный сид падает на uq_visits_open_table, если демо-визит закрыт, а на столе "
         "«Стол 1» открыт другой визит (обычная ситуация после работы с приложением в dev)"
     ),
 )

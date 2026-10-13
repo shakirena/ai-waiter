@@ -126,6 +126,33 @@ def test_ci_has_services_job_for_db_and_scaled_markers(ci: dict[str, Any]) -> No
     assert 'pytest -q -m "db or scaled"' in _ci_commands(job)
 
 
+def test_ci_services_job_uses_dedicated_test_database(ci: dict[str, Any]) -> None:
+    """#48, ADR-7.11: БД сервис-контейнера *_test, db-тесты через TEST_DATABASE_URL, пустой набор — ошибка."""
+    job = ci["jobs"]["backend-services"]
+    assert job["services"]["postgres"]["env"]["POSTGRES_DB"] == "ai_waiter_test"
+    assert job["env"]["TEST_DATABASE_URL"].endswith("/ai_waiter_test")
+    assert job["env"]["DATABASE_URL"].startswith("postgresql+asyncpg://")
+    assert "code=$?" not in _ci_commands(job)
+
+
+def test_ci_services_job_checks_migrations_before_pytest(ci: dict[str, Any]) -> None:
+    """#54, ADR-7.10: цикл upgrade/downgrade/upgrade и alembic check CLI-шагами перед pytest."""
+    job = ci["jobs"]["backend-services"]
+    runs = [step.get("run", "").strip() for step in job["steps"]]
+    expected = [
+        "uv run alembic upgrade head",
+        "uv run alembic downgrade base",
+        "uv run alembic upgrade head",
+        "uv run alembic check",
+    ]
+    start = runs.index(expected[0])
+    assert runs[start : start + len(expected)] == expected
+    pytest_step = next(i for i, run in enumerate(runs) if run.startswith("uv run pytest"))
+    assert start + len(expected) <= pytest_step, "проверка миграций должна идти до pytest"
+    # Alembic берёт DATABASE_URL джоба: это та же тестовая БД, что и у db-тестов.
+    assert job["env"]["DATABASE_URL"] == job["env"]["TEST_DATABASE_URL"]
+
+
 def test_ci_does_not_swallow_failures(ci: dict[str, Any]) -> None:
     """Ни один шаг не использует continue-on-error: падение любого шага делает проверку красной."""
     for job in ci["jobs"].values():

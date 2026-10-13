@@ -41,12 +41,12 @@
 **Контекст.** CLAUDE.md и NFR-4: `tenant_id` во всех таблицах заведения и во всех запросах. Главный риск — строка одного заведения, ссылающаяся на строку другого (например, позиция заказа на блюдо чужого меню из-за ошибки в сервисе).
 
 **Решение.**
-1. `tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT` во всех таблицах, кроме `tenants`, — включая дочерние (`order_items`, `menu_item_prices`, `cart_items`, `order_events`, `messages`, связки). Отдельный индекс по `tenant_id` не создаётся: его покрывают составные UNIQUE/индексы, начинающиеся с `tenant_id`.
+1. `tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT` во всех таблицах, кроме `tenants`, — включая дочерние (`order_items`, `menu_item_prices`, `cart_items`, `order_events`, `messages`, связки). Отдельный индекс по `tenant_id` не создаётся: его покрывают составные UNIQUE/индексы, начинающиеся с `tenant_id`. Если PK таблицы не начинается с `tenant_id` и составного UNIQUE с ним нет, создаётся индекс `(tenant_id, <ключ>)`: `ix_menu_item_prices_tenant_id_menu_item_id`, `ix_menu_item_meta_tenant_id_menu_item_id` (добавлены в #54, DEC-010), `ix_menu_item_allergens_tenant_id_allergen_id`.
 2. Каждая родительская таблица имеет `UNIQUE (tenant_id, id)`; ссылки внутри заведения — **составные FK** `(tenant_id, parent_id) → parent (tenant_id, id)`. Тогда БД гарантирует, что ребёнок и родитель принадлежат одному заведению. Для nullable-ссылок (`tables.hall_id`) действует `MATCH SIMPLE`: при `hall_id IS NULL` FK не проверяется — это нужное поведение.
 3. `ON DELETE`: `CASCADE` только для «владеемых» строк (`menu_item_prices`, `menu_item_meta`, `menu_item_allergens` → `menu_items`; `cart_items`, `messages` → `visits`; `order_items` → `orders`), остальное — `RESTRICT`. Данные меню не удаляются (INT-2, `is_hidden`), заказы не удаляются никогда. `ON DELETE SET NULL` на составных FK не используется (обнулил бы и `tenant_id`).
 4. Глобально уникальны только `tables.qr_token` (гость приходит только с токеном — по нему определяется заведение, FR-1) и первичные ключи. Все бизнес-уникальности — в границах заведения: `UNIQUE (tenant_id, external_id)` для `categories`, `menu_items`, `tables`; `UNIQUE (tenant_id, idempotency_key)` для `orders`; `UNIQUE (tenant_id, code)` для `allergens`.
 5. Справочник аллергенов — отдельный у каждого заведения (копия 14 кодов ЕС при создании заведения, `app/models/reference.py`): FR-16a говорит «по умолчанию», то есть заведение может дополнять; глобальная таблица с nullable `tenant_id` усложнила бы уникальность и RLS.
-6. В приложении: репозитории/сервисы принимают `tenant_id` явным аргументом; unit-тест метаданных проверяет, что у каждой таблицы, кроме `tenants`, есть `tenant_id NOT NULL`, а каждый FK на таблицу заведения включает `tenant_id`.
+6. В приложении: репозитории/сервисы принимают `tenant_id` явным аргументом; unit-тест метаданных (`tests/test_models_metadata.py`) проверяет, что у каждой таблицы, кроме `tenants`, есть `tenant_id NOT NULL`, а каждый FK на таблицу заведения включает `tenant_id`. db-тест `tests/db/test_schema_invariants.py` (#54, DEC-010) проверяет то же на реальной схеме после `upgrade head`: `tenant_id NOT NULL` — первая колонка хотя бы одного полного (не частичного) индекса — обычного, UNIQUE или PK.
 
 **Почему `UNIQUE (tenant_id, idempotency_key)`, а не глобально и не по визиту.** Глобальная уникальность дала бы межарендный оракул/DoS: гость заведения A, подобрав ключ заведения B, получил бы конфликт. Ключ генерирует клиент (`crypto.randomUUID()`), граница заведения согласуется с RLS и будущим секционированием. Сервис при конфликте загружает существующий заказ и сверяет `visit_id`: совпал — возвращает тот же заказ (`200`, идемпотентный повтор), не совпал — `409` (#12).
 
@@ -62,7 +62,9 @@
 
 **Решение.**
 - Деньги гостя — `NUMERIC(10,2)` (`Numeric(10, 2, asdecimal=True)` → `Decimal`), `CHECK (x >= 0)`: `menu_item_prices.price`, `cart_items.price_at_add`, `orders.total`, `orders.pos_total`, `order_items.price_at_order`. В JSON API — строка с двумя знаками (сериализация — общий тип `Money` в схемах, появляется в #10/#12).
-- **Исключение:** стоимость вызова ИИ `messages.cost_usd NUMERIC(12,6)` — это не деньги гостя, а оценка расходов в долях цента (NFR-7); `NUMERIC(10,2)` округлил бы её до нуля. Unit-тест метаданных содержит это имя в явном списке исключений.
+- **Исключение:** стоимость вызова ИИ `messages.cost_usd NUMERIC(12,6)` — это не деньги гостя, а оценка расходов в долях цента (NFR-7); `NUMERIC(10,2)` округлил бы её до нуля.
+- **Не деньги:** `menu_item_meta.weight_amount NUMERIC(8,2)` — вес/объём порции (словарь данных, открытый вопрос 8).
+- Оба исключения перечислены явно в `NUMERIC_EXCEPTIONS` двух тестов: unit-теста метаданных (`tests/test_models_metadata.py`) и db-теста инвариантов схемы (`tests/db/test_schema_invariants.py`, #54, DEC-010). Любая другая `numeric`-колонка обязана быть `NUMERIC(10,2)`, денежные колонки перечислены в `MONEY_COLUMNS`; `real`/`double precision`/`money` запрещены. Новая не-денежная `numeric` добавляется в `NUMERIC_EXCEPTIONS` обоих тестов с обоснованием.
 - Валюта — `text CHECK (currency ~ '^[A-Z]{3}$')`: у заведения (`tenants.currency`), у позиции (`menu_items.currency`, приходит из кассы), снимок в заказе (`orders.currency`). Синхронизация отклоняет позиции с валютой, отличной от валюты заведения.
 - Количество — `integer CHECK (qty BETWEEN 1 AND 99)` в корзине и заказе (дробные порции — открытый вопрос 4). В Integration API `qty` — строка (как в ТЗ 4.4), это позволит перейти на `NUMERIC(10,3)` без смены контракта.
 - **Снимки** (чтобы старые заказы не менялись при смене меню, INT-2, INT-3):
@@ -185,6 +187,7 @@ CREATE TRIGGER trg_order_events_append_only BEFORE UPDATE OR DELETE ON order_eve
   Обоснование: группы совпадают с доменами и, вероятно, с child stories — каждая story приносит свою ревизию и тест; ручные `0001…` читаемы и не дают «веток» при последовательной работе. Одна начальная ревизия на все 15 таблиц — отклонена: огромный дифф, нельзя сдавать stories по частям. Сжатие ревизий в будущем не делаем (после первого развёртывания история неизменна).
 - **Обратимость:** каждая `downgrade()` удаляет ровно то, что создала `upgrade()`, в обратном порядке. db-тест: `upgrade head → downgrade base → upgrade head` на пустой схеме без ошибок, и после `downgrade base` в схеме не остаётся таблиц, кроме `alembic_version`. `downgrade` — для разработки и CI; в эксплуатации ошибки исправляются новой ревизией вперёд.
 - **Соответствие моделей и миграций:** db-тест вызывает `alembic.command.check(cfg)` после `upgrade head` (Alembic ≥ 1.9: ошибка, если autogenerate видит различия). CHECK и триггеры autogenerate не сравнивает — для них отдельные db-тесты (ADR-7.2, ADR-7.6).
+- **CI (#54):** в джобе `backend-services` до pytest выполняются CLI-шаги `uv run alembic upgrade head` → `downgrade base` → `upgrade head` → `check` на `ai_waiter_test` (`DATABASE_URL` джоба совпадает с `TEST_DATABASE_URL`); порядок шагов проверяет `tests/test_repo_artifacts.py`. Затем pytest с db-тестами, включая `tests/db/test_schema_invariants.py` (DEC-010).
 - **Применение миграций:** приложение при старте миграции **не** запускает (в `scaled` несколько процессов api устроили бы гонку). `scaled`: одноразовый сервис `migrate` в `deploy/docker-compose.yml` (якорь `x-app`, команда `alembic upgrade head`), `api` и `worker` — `depends_on: migrate: condition: service_completed_successfully`. `single` (Windows): `uv run alembic upgrade head` из `backend/` перед стартом службы (шаг установки/обновления в #30). Dockerfile уже копирует `backend/` целиком — `alembic.ini` и `alembic/` попадут в образ.
 
 ---
@@ -198,6 +201,7 @@ CREATE TRIGGER trg_order_events_append_only BEFORE UPDATE OR DELETE ON order_eve
 - Изоляция теста: фикстура `db_session` (function scope, совпадает с `asyncio_default_fixture_loop_scope = "function"`): движок с `NullPool` → соединение → `BEGIN` → `AsyncSession(bind=conn, join_transaction_mode="create_savepoint")` → после теста `ROLLBACK`. `commit()` в тестируемом коде фиксирует только SAVEPOINT, БД остаётся чистой. Тест обратимости миграций работает на той же БД и в конце возвращает схему в `head`.
 - CI (`.github/workflows/ci.yml`, джоб `backend-services`): `POSTGRES_DB: ai_waiter_test`, env `TEST_DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ai_waiter_test` (и `DATABASE_URL` на ту же БД). Комментарий о коде 5 обновить: с #7 db-тесты есть. Windows-джоб и Linux-джоб `backend` по-прежнему `-m "not db and not scaled"` — db-тестов не видят и PostgreSQL не требуют.
 - Unit-тесты модели **без БД** (идут на обеих ОС): `tests/test_models_metadata.py` — инварианты `Base.metadata` (tenant_id, составные FK, типы денег/времени, наличие CHECK статусов, имена по соглашению); `tests/test_migrations_offline.py` — `alembic upgrade head --sql` (офлайн-генерация SQL) проходит и содержит все 15 таблиц и триггер.
+- Инварианты реальной схемы (`tenant_id`, `NUMERIC(10,2)` с исключениями ADR-7.4, `timestamptz`) — db-тест `tests/db/test_schema_invariants.py` (#54, DEC-010): читает `pg_catalog`/`information_schema` и ловит миграцию, разошедшуюся с моделью в том, чего не видит `alembic check`.
 - Локально на Windows (PostgreSQL как служба, Docker не нужен): создать роль и БД `ai_waiter_test` (ADR-7.13), задать `TEST_DATABASE_URL` в окружении сессии и запустить `.venv\Scripts\python.exe -m pytest -q -m db`.
 
 ---
@@ -209,7 +213,7 @@ CREATE TRIGGER trg_order_events_append_only BEFORE UPDATE OR DELETE ON order_eve
 - **Идемпотентность:** заведение с фиксированным UUID `DEMO_TENANT_ID`; всё остальное — `INSERT … ON CONFLICT (естественный ключ) DO UPDATE`: аллергены по `(tenant_id, code)`, залы по `(tenant_id, name)`, столы по `qr_token`, категории и позиции по `(tenant_id, external_id)`, цены по `(menu_item_id, price_tier)`, мета по `menu_item_id`. Повторный запуск не плодит дублей и возвращает эталонные значения. Одна транзакция.
 - **Данные вымышленные:** заведение «Demo Restoran», валюта AZN, часовой пояс `Asia/Baku`; 2 зала, 6 столов (один кабинет с тарифом `vip`, один неактивный) с детерминированными dev-токенами (`demo-table-01-…`, ≥ 22 символов, только для разработки — поэтому запрет в prod); 14 аллергенов ЕС с названиями AZ/RU; 4 категории, ~15 блюд с ценами `default`/`vip`; часть блюд с `allergens_verified = true` и списком аллергенов, часть — без флага (проверка AI-2), одно `is_hidden`, одно `is_available = false`. Без IP-адресов, ключей, реальных названий и цен заведения. Данные — Python-модуль `app/seed/data.py` (не файлы по путям — переносимость).
 - В конце печатает относительные ссылки `/t/{token}` для локальной проверки.
-- Тест (`tests/db/test_seed.py`): два запуска подряд → одинаковые счётчики строк; отказ при `APP_ENV=prod`.
+- Тесты: `tests/db/test_seed.py` — два запуска подряд → одинаковые счётчики строк, полный набор данных, возврат к эталонным значениям, защита чужого стола, пароль не показывается; `tests/test_seed.py` (без БД) — корректность `app/seed/data.py`, CLI и отказ при `APP_ENV=prod` (код 2) до чтения остальной конфигурации. `tests/test_seed_loader.py` (без БД, G5) — контракт загрузчика на `AsyncMock`: порядок запросов, `ON CONFLICT` по естественным ключам, `SeedError` на чужих строках. Известный дефект #58: повторный сид при закрытом демо-визите и другом открытом визите на демо-столе нарушает `uq_visits_open_table` (TC-53-007, тест `xfail(strict=True)`).
 
 ---
 
@@ -493,6 +497,8 @@ erDiagram
 | `price` | numeric(10,2) | ✓ | | CHECK `>= 0` |
 | TS | | | | |
 
+Индекс: `ix_menu_item_prices_tenant_id_menu_item_id` `(tenant_id, menu_item_id)` — PK начинается не с `tenant_id` (ADR-7.3 п.1; добавлен в #54).
+
 Цена для стола: тариф стола, при отсутствии — `default` (A.2: `vip` не передаётся, если `price_vip = 0`). Наличие тарифа `default` у каждой позиции проверяет синхронизация (#8/#16), не CHECK.
 
 **`menu_item_meta`** — PK `menu_item_id` (1:1), строки создаёт только админка/сид; отсутствие строки = значения по умолчанию.
@@ -513,6 +519,8 @@ erDiagram
 | `tags` | text[] | ✓ | `'{}'` | |
 | `visible_to_ai` | boolean | ✓ | `true` | |
 | TS | | | | |
+
+Индекс: `ix_menu_item_meta_tenant_id_menu_item_id` `(tenant_id, menu_item_id)` — PK `menu_item_id` без `tenant_id` (ADR-7.3 п.1; добавлен в #54).
 
 **`allergens`**
 
@@ -684,7 +692,7 @@ CLI: `alembic upgrade head` / `alembic downgrade -1` (из `backend/`), `python 
 
 ## Security
 
-- **Tenant-изоляция:** `tenant_id NOT NULL` во всех таблицах заведения; составные FK исключают межарендные ссылки на уровне БД (ADR-7.3); бизнес-уникальности в границах заведения (нет межарендного оракула по `idempotency_key`/`external_id`). Unit-тест метаданных не даёт добавить таблицу без `tenant_id`. RLS — подготовлено, не включено (обоснование в ADR-7.3).
+- **Tenant-изоляция:** `tenant_id NOT NULL` во всех таблицах заведения; составные FK исключают межарендные ссылки на уровне БД (ADR-7.3); бизнес-уникальности в границах заведения (нет межарендного оракула по `idempotency_key`/`external_id`). Unit-тест метаданных и db-тест инвариантов схемы (`tests/db/test_schema_invariants.py`, #54) не дают добавить таблицу без `tenant_id`. RLS — подготовлено, не включено (обоснование в ADR-7.3).
 - **QR-токен:** глобально уникален, CHECK формата ≥ 22 символов base64url (≥ 128 бит, FR-1); генерация — `secrets.token_urlsafe(32)` в #9/#27. Хранится открытым текстом (нужен для повторной печати; открытый вопрос 5).
 - **Секреты:** `alembic.ini` без строки подключения; `DATABASE_URL` и `TEST_DATABASE_URL` только в env; роль приложения — не суперпользователь (ADR-7.13). Сид — только вымышленные данные, запрет в `prod` (детерминированные dev-токены из публичного репозитория не должны попасть в рабочую БД).
 - **Целостность журнала:** `order_events` защищён триггером от UPDATE/DELETE (ADR-7.6).
@@ -779,22 +787,38 @@ backend/app/api/deps.py           # get_database, get_session, SessionDep
 backend/app/api/health.py         # проверка "database" — отдельная story (spec, вопрос 19)
 backend/tests/conftest.py         # фиктивный DATABASE_URL в make_settings, подмена Database на FakeDatabase
 backend/tests/doubles.py          # FakeDatabase
-backend/tests/test_models_metadata.py     # без БД: инварианты metadata
-backend/tests/test_migrations_offline.py  # без БД: alembic upgrade head --sql
+backend/tests/test_db_base.py             # без БД: Base, NAMING_CONVENTION, миксины
+backend/tests/test_db_session.py          # без БД: Database (ленивый движок, ping, маскирование пароля)
+backend/tests/test_db_guards.py           # без БД: guard фикстуры db (TEST_DATABASE_URL, *_test, CI=true)
+backend/tests/test_alembic_setup.py       # без БД: alembic.ini без строки подключения, источники подключения env.py
+backend/tests/test_models_metadata.py     # без БД: инварианты metadata, NUMERIC_EXCEPTIONS
+backend/tests/test_migrations_offline.py  # без БД: alembic upgrade head --sql, линейная цепочка, проверка кодировки
 backend/tests/test_ids.py                 # без БД: UUIDv7 (версия, вариант, монотонность по времени)
-backend/tests/test_enums.py               # без БД: переходы ORDER_TRANSITIONS
+backend/tests/test_order_status.py        # без БД: ORDER_TRANSITIONS, can_transition (матрица 8 × 8)
+backend/tests/test_seed.py                # без БД: app.seed.data, CLI, отказ при APP_ENV=prod, точка входа модуля (runpy)
+backend/tests/test_seed_loader.py         # без БД: app.seed.loader на AsyncMock — порядок запросов, ON CONFLICT по естественным ключам, защита чужих строк, RETURNING id (G5)
+backend/tests/test_repo_artifacts.py      # без БД: шаги alembic в CI до pytest
 backend/tests/db/__init__.py
 backend/tests/db/conftest.py              # TEST_DATABASE_URL, guard *_test, migrated_database, db_session
-backend/tests/db/test_migrations.py       # upgrade/downgrade/upgrade, alembic check
-backend/tests/db/test_check_constraints.py # CHECK статусов = перечисления; триггер order_events
+backend/tests/db/factories.py             # фабрики строк для db-тестов
+backend/tests/db/test_db_fixture.py       # AC-1: фикстура db, откат данных теста
+backend/tests/db/test_alembic.py          # AC-1: upgrade / downgrade base / upgrade, alembic check
+backend/tests/db/test_migrations.py       # downgrade -1 по ревизиям; CHECK статусов = перечисления; кодировка в 0001
+backend/tests/db/test_tenants_tables.py   # AC-2: tenants, halls, tables
+backend/tests/db/test_menu.py             # AC-3: меню, скрытие без удаления, CHECK, ON DELETE
+backend/tests/db/test_visits.py           # AC-4: один open-визит на стол, корзина, сообщения
+backend/tests/db/test_orders.py           # AC-5: idempotency_key, статусы, снимки, триггер order_events
 backend/tests/db/test_tenant_isolation.py # межарендный FK отвергается БД
-backend/tests/db/test_constraints.py      # уникальности, деньги >= 0, один open-визит на стол
-backend/tests/db/test_seed.py             # идемпотентность, запрет в prod
+backend/tests/db/test_schema_invariants.py # AC-7: tenant_id, NUMERIC(10,2), timestamptz на реальной схеме (DEC-010)
+backend/tests/db/test_seed.py             # AC-6: идемпотентность, полный набор данных; сид поверх заказа с тем же idempotency_key; xfail(strict) повторного сида при другом открытом визите (дефект #58, TC-53-007)
+backend/tests/db/test_health_db.py        # #56: /health/ready с настоящим PostgreSQL
 .env.example                      # DATABASE_URL обязателен; DB_POOL_SIZE, DB_MAX_OVERFLOW; TEST_DATABASE_URL (закомментирован)
-.github/workflows/ci.yml          # backend-services: POSTGRES_DB ai_waiter_test, TEST_DATABASE_URL
+.github/workflows/ci.yml          # backend-services: POSTGRES_DB ai_waiter_test, TEST_DATABASE_URL; CLI alembic upgrade/downgrade/upgrade/check до pytest (#54)
 deploy/docker-compose.yml         # сервис migrate (x-app, alembic upgrade head), depends_on у api/worker
 README.md                         # создание роли и БД на Windows/Linux, миграции, сид, db-тесты
 ```
+
+Список тестов приведён к фактическому состоянию после разработки (doc-sync 2026-10-12); после фазы тестирования (doc-sync 2026-10-13) добавлены `tests/test_seed_loader.py` и два db-теста сида в `tests/db/test_seed.py` — `test_seed_attaches_lines_to_existing_order_with_same_idempotency_key` и `test_seed_rerun_when_demo_table_has_another_open_visit` (xfail, #58). Вместо задуманных `test_enums.py`, `test_check_constraints.py`, `test_constraints.py` проверки разложены по `test_order_status.py`, `test_migrations.py` и тестам по группам таблиц (`test_tenants_tables.py`, `test_menu.py`, `test_visits.py`, `test_orders.py`).
 
 Раскладка отличается от предварительной пометки в arch #6 (`app/core/db.py`): слой БД — отдельный пакет `app/db/`, модели — `app/models/` по доменам, потому что модулей больше одного и `app/core` отведён под инфраструктурные интерфейсы режимов.
 

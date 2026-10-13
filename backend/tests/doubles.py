@@ -1,4 +1,4 @@
-"""Тестовые двойники EventBus/TaskScheduler/RateLimiter (#38).
+"""Тестовые двойники EventBus/TaskScheduler/RateLimiter (#38) и Database (#48).
 
 Нужны, чтобы проверять контейнер, lifespan и /health/ready независимо от реализаций
 single (#39) и scaled (#40). Каждый двойник пишет вызовы в общий журнал ``calls``.
@@ -121,10 +121,39 @@ class FakeTaskScheduler(_Lifecycle, TaskScheduler):
         return self.jobs.pop(job_id, None) is not None
 
 
+class FakeSession:
+    """Заглушка AsyncSession для проверки зависимостей: отмечает открытие и закрытие."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+
+class FakeDatabase(_Lifecycle):
+    """Двойник ``app.db.session.Database`` (#48): управляемые ``start/stop/ping`` без PostgreSQL.
+
+    ``session()`` выдаёт ``FakeSession`` и закрывает её при выходе — как ``Database.session``."""
+
+    name = "database"
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.sessions: list[FakeSession] = []
+
+    @asynccontextmanager
+    async def session(self) -> AsyncIterator[FakeSession]:
+        session = FakeSession()
+        self.sessions.append(session)
+        try:
+            yield session
+        finally:
+            session.closed = True
+
+
 def make_fake_container(
     settings: Settings,
     calls: list[str] | None = None,
     *,
+    database: FakeDatabase | None = None,
     bus: FakeEventBus | None = None,
     rate_limiter: FakeRateLimiter | None = None,
     scheduler: FakeTaskScheduler | None = None,
@@ -132,6 +161,7 @@ def make_fake_container(
     calls = calls if calls is not None else []
     return Container(
         settings=settings,
+        database=database or FakeDatabase(calls),  # type: ignore[arg-type]
         event_bus=bus or FakeEventBus(calls),
         scheduler=scheduler or FakeTaskScheduler(TaskRegistry(), calls),
         rate_limiter=rate_limiter or FakeRateLimiter(calls),

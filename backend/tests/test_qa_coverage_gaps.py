@@ -24,6 +24,7 @@ def test_python_dash_m_app_calls_uvicorn(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr("uvicorn.run", lambda *a, **kw: calls.append((a, kw)))
     monkeypatch.setenv("APP_MODE", "single")
     monkeypatch.setenv("PORT", "8766")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://test:test@db.invalid/test")
     from app.core.config import get_settings
 
     get_settings.cache_clear()

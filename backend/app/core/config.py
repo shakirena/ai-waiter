@@ -56,9 +56,13 @@ class Settings(BaseSettings):
     port: int = Field(default=8000, ge=1, le=65535)
     api_workers: int = Field(default=1, ge=1)
 
-    # --- хранилища. DATABASE_URL станет обязательным в #7 (модель данных); в каркасе к БД
-    # никто не подключается, поэтому локальный запуск возможен без PostgreSQL (AC-9).
-    database_url: SecretStr | None = None
+    # --- PostgreSQL (#7, ADR-7.9): DATABASE_URL обязателен, только схема postgresql+asyncpg://.
+    # Движок ленивый: приложение стартует и при недоступной БД, о ней сообщает /health/ready.
+    database_url: SecretStr
+    db_pool_size: int = Field(default=5, ge=1)
+    db_max_overflow: int = Field(default=5, ge=0)
+
+    # --- Redis (обязателен при APP_MODE=scaled)
     redis_url: SecretStr | None = None
 
     # --- внешний адрес: всегда домен
@@ -85,8 +89,9 @@ class Settings(BaseSettings):
 
     @field_validator("database_url")
     @classmethod
-    def _check_database_url(cls, value: SecretStr | None) -> SecretStr | None:
-        if value is not None and not value.get_secret_value().startswith("postgresql+asyncpg://"):
+    def _check_database_url(cls, value: SecretStr) -> SecretStr:
+        # В тексте ошибки нет значения: в строке подключения есть пароль.
+        if not value.get_secret_value().startswith("postgresql+asyncpg://"):
             raise ValueError("DATABASE_URL должен использовать схему postgresql+asyncpg:// (ADR-5)")
         return value
 

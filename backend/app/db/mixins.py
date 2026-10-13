@@ -1,13 +1,44 @@
-"""Миксины моделей (ADR-7.3, ADR-7.4). Заглушки: колонки описаны в docstring, developer
-переносит их в ``Mapped``-атрибуты после добавления sqlalchemy в зависимости.
+"""Миксины моделей (ADR-7.1, ADR-7.3, ADR-7.4).
+
+Пример модели заведения::
+
+    class Hall(UUIDPrimaryKeyMixin, TenantMixin, TimestampMixin, Base):
+        __tablename__ = "halls"
+        __extra_table_args__ = (UniqueConstraint("tenant_id", "name"),)
+
+        name: Mapped[str] = mapped_column(Text)
+
+Порядок колонок в DDL: ``id``, ``tenant_id``, колонки модели, ``created_at``/``updated_at``
+(``sort_order``).
+
+``__table_args__`` формирует ``TenantMixin``: свои ограничения модель перечисляет в
+``__extra_table_args__`` (ограничения и индексы; словарь опций таблицы — последним элементом,
+как в ``__table_args__``).
 """
 
 from __future__ import annotations
 
+import uuid
+from datetime import datetime
+from typing import Any, ClassVar
+
+from sqlalchemy import DateTime, ForeignKey, UniqueConstraint, Uuid, func, text
+from sqlalchemy.orm import Mapped, declared_attr, mapped_column
+
+from app.db.ids import new_id
+
 
 class UUIDPrimaryKeyMixin:
-    """``id UUID PK``: ``mapped_column(Uuid, primary_key=True, default=new_id,
-    server_default=text("gen_random_uuid()"))`` — см. ``app.db.ids.new_id``."""
+    """``id UUID PRIMARY KEY``: значение UUIDv7 из ``new_id``; запасной ``server_default
+    gen_random_uuid()`` — для ручных INSERT (ADR-7.1)."""
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        primary_key=True,
+        default=new_id,
+        sort_order=-20,
+        server_default=text("gen_random_uuid()"),
+    )
 
 
 class TenantMixin:
@@ -23,8 +54,43 @@ class TenantMixin:
     ``menu_item_allergens``) ``UNIQUE (tenant_id, id)`` не создаётся — у них нет ``id``.
     """
 
+    __extra_table_args__: ClassVar[tuple[Any, ...]] = ()
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("tenants.id", ondelete="RESTRICT"),
+        nullable=False,
+        sort_order=-10,
+    )
+
+    @declared_attr.directive
+    @classmethod
+    def __table_args__(cls) -> tuple[Any, ...]:
+        args: list[Any] = []
+        if issubclass(cls, UUIDPrimaryKeyMixin):
+            args.append(UniqueConstraint("tenant_id", "id"))
+        extra = list(cls.__extra_table_args__)
+        options = extra.pop() if extra and isinstance(extra[-1], dict) else None
+        args.extend(extra)
+        if options is not None:
+            args.append(options)
+        return tuple(args)
+
 
 class TimestampMixin:
-    """``created_at TIMESTAMPTZ NOT NULL DEFAULT now()``,
-    ``updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`` с ``onupdate=func.now()`` (на уровне ORM,
-    без триггера). Только aware-datetime (ruff DTZ); ``DateTime(timezone=True)``."""
+    """``created_at``/``updated_at TIMESTAMPTZ NOT NULL DEFAULT now()``; ``updated_at``
+    обновляется ORM (``onupdate=func.now()``), без триггера. Только aware-datetime (ruff DTZ)."""
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        sort_order=10,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+        sort_order=10,
+    )

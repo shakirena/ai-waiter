@@ -18,14 +18,17 @@ from app import __version__
 from app.core.config import AppEnv, Settings, get_settings
 from app.core.scheduler import TaskRegistry
 from app.main import create_app
-from tests.conftest import make_settings
+from tests.conftest import FAKE_DATABASE_URL, make_settings
 
 
 @pytest.fixture
 def clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[pytest.MonkeyPatch]:
     for name in Settings.model_fields:
         monkeypatch.delenv(name.upper(), raising=False)
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATABASE_URL", FAKE_DATABASE_URL)
+    workdir = tmp_path / "backend"  # ../.env относительно рабочего каталога — тоже внутри tmp_path
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
     get_settings.cache_clear()
     yield monkeypatch
     get_settings.cache_clear()
@@ -87,7 +90,9 @@ def test_import_does_not_read_environment(tmp_path: Path) -> None:
     а ``app`` не создаётся, пока к нему не обратились."""
     backend_dir = Path(__file__).resolve().parents[1]
     code = "import app.main as m; assert 'app' not in vars(m)"
-    env = {**os.environ, "APP_MODE": "bogus", "PYTHONPATH": str(backend_dir)}
+    # Без DATABASE_URL (#48): импорт не создаёт движок БД и не требует обязательных настроек.
+    env = {key: value for key, value in os.environ.items() if key.upper() != "DATABASE_URL"}
+    env.update({"APP_MODE": "bogus", "PYTHONPATH": str(backend_dir)})
     result = subprocess.run(  # noqa: S603 — фиксированная команда, без shell
         [sys.executable, "-c", code], cwd=tmp_path, env=env, capture_output=True, text=True, check=False
     )
@@ -142,3 +147,23 @@ def test_main_exits_with_clear_error(clean_env: pytest.MonkeyPatch, env: dict[st
     with pytest.raises(SystemExit) as exc_info:
         entrypoint.main()
     assert expected in str(exc_info.value.code)
+
+
+def test_main_without_database_url_exits_with_clear_error(clean_env: pytest.MonkeyPatch) -> None:
+    """AC-1 (#48): без DATABASE_URL приложение не стартует и называет переменную."""
+    clean_env.delenv("DATABASE_URL")
+    clean_env.setattr(entrypoint.uvicorn, "run", lambda *a, **kw: pytest.fail("uvicorn не должен запускаться"))
+    with pytest.raises(SystemExit) as exc_info:
+        entrypoint.main()
+    assert "DATABASE_URL: обязательная переменная не задана" in str(exc_info.value.code)
+
+
+def test_main_with_bad_database_url_does_not_show_password(clean_env: pytest.MonkeyPatch) -> None:
+    clean_env.setenv("DATABASE_URL", "postgresql://ai_waiter:pw-secret@localhost/ai_waiter")
+    clean_env.setattr(entrypoint.uvicorn, "run", lambda *a, **kw: pytest.fail("uvicorn не должен запускаться"))
+    with pytest.raises(SystemExit) as exc_info:
+        entrypoint.main()
+    text = str(exc_info.value.code)
+    assert "DATABASE_URL" in text
+    assert "postgresql+asyncpg://" in text
+    assert "pw-secret" not in text

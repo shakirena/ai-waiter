@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.config import AppEnv, AppMode, ConfigError, Settings, get_settings
-from tests.conftest import make_settings
+from tests.conftest import FAKE_DATABASE_URL, make_settings
 
 
 def test_defaults_single_mode_on_loopback() -> None:
@@ -67,10 +67,14 @@ def test_frontend_dist_default_is_relative_to_repo() -> None:
 
 @pytest.fixture
 def clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[pytest.MonkeyPatch]:
-    """Окружение без переменных Settings и без .env рядом: get_settings() видит только то, что задал тест."""
+    """Окружение без переменных Settings и без .env рядом: get_settings() видит только то, что задал тест.
+    Обязательный DATABASE_URL — фиктивный; тест отсутствия переменной удаляет его сам."""
     for name in Settings.model_fields:
         monkeypatch.delenv(name.upper(), raising=False)
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATABASE_URL", FAKE_DATABASE_URL)
+    workdir = tmp_path / "backend"  # ../.env относительно рабочего каталога — тоже внутри tmp_path
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
     get_settings.cache_clear()
     yield monkeypatch
     get_settings.cache_clear()
@@ -188,3 +192,44 @@ def test_env_example_lists_every_setting() -> None:
     names = set(re.findall(r"^#?\s*([A-Z][A-Z0-9_]*)=", text, flags=re.MULTILINE))
     missing = {name.upper() for name in Settings.model_fields} - names
     assert not missing, f"нет в .env.example: {sorted(missing)}"
+
+
+# --- #48: PostgreSQL
+
+
+def test_database_url_is_required(clean_env: pytest.MonkeyPatch) -> None:
+    """AC-1: без DATABASE_URL — понятная ошибка с именем переменной."""
+    clean_env.delenv("DATABASE_URL")
+    with pytest.raises(ConfigError, match="DATABASE_URL: обязательная переменная не задана"):
+        get_settings()
+
+
+def test_database_url_is_secret_and_pool_defaults() -> None:
+    s = make_settings()
+    assert s.database_url.get_secret_value() == FAKE_DATABASE_URL
+    assert (s.db_pool_size, s.db_max_overflow) == (5, 5)
+
+
+@pytest.mark.parametrize(
+    ("variable", "value", "expected"),
+    [
+        ("DB_POOL_SIZE", "0", "DB_POOL_SIZE: значение должно быть не меньше 1"),
+        ("DB_MAX_OVERFLOW", "-1", "DB_MAX_OVERFLOW: значение должно быть не меньше 0"),
+    ],
+)
+def test_pool_settings_are_validated(clean_env: pytest.MonkeyPatch, variable: str, value: str, expected: str) -> None:
+    clean_env.setenv(variable, value)
+    with pytest.raises(ConfigError, match=re.escape(expected)):
+        get_settings()
+
+
+def test_pool_settings_read_from_environment(clean_env: pytest.MonkeyPatch) -> None:
+    clean_env.setenv("DB_POOL_SIZE", "10")
+    clean_env.setenv("DB_MAX_OVERFLOW", "0")
+    s = get_settings()
+    assert (s.db_pool_size, s.db_max_overflow) == (10, 0)
+
+
+def test_test_database_url_is_not_a_setting() -> None:
+    """ADR-7.11: TEST_DATABASE_URL читают только тесты, приложение его не видит."""
+    assert "test_database_url" not in Settings.model_fields

@@ -3,17 +3,26 @@
 Использование в эндпоинтах::
 
     async def handler(bus: Annotated[EventBus, Depends(get_event_bus)]) -> ...: ...
+
+    async def create(session: SessionDep) -> ...:
+        ...
+        await session.commit()  # транзакцию фиксирует сервис явно (ADR-7.9)
 """
 
 from __future__ import annotations
 
-from fastapi import Request
+from collections.abc import AsyncIterator
+from typing import Annotated
+
+from fastapi import Depends, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.container import Container
 from app.core.events import EventBus
 from app.core.ratelimit import RateLimiter
 from app.core.scheduler import TaskScheduler
+from app.db.session import Database
 
 
 def get_container(request: Request) -> Container:
@@ -46,3 +55,17 @@ def get_scheduler(request: Request) -> TaskScheduler:
 
 def get_rate_limiter(request: Request) -> RateLimiter:
     return get_container(request).rate_limiter
+
+
+def get_database(request: Request) -> Database:
+    return get_container(request).database
+
+
+async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
+    """Сессия на запрос. Автокоммита нет: сервис вызывает ``await session.commit()`` сам
+    (NFR-3: заказ фиксируется до вызова ИИ), незафиксированное откатывается при закрытии."""
+    async with get_database(request).session() as session:
+        yield session
+
+
+SessionDep = Annotated[AsyncSession, Depends(get_session)]

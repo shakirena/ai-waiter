@@ -68,3 +68,17 @@
 **Reason:** ADR-7.11; Windows-джоб CI без PostgreSQL.
 **Applies to:** все stories с db-тестами.
 **Revisit when:** параллельный запуск тестов (pytest-xdist) — нужна БД на воркер.
+
+## DEC-009: CHECK из кода и шаблон тестов модели данных
+
+**Decision:** Текст CHECK строится только построителями `app/models/checks.py` (`sql_in`, `sql_match`, `sql_not_match`, `sql_length`, `sql_between`, `sql_text_array`) из перечислений и шаблонов `app/models/enums.py`; короткое имя CHECK = имя колонки (`ck_<table>_<column>`), составные — по смыслу (`ck_menu_item_meta_weight`). Новая таблица/ревизия обязана дополнить: `EXPECTED_TABLES`, `EXPECTED_CHECKS`, `NUMERIC_EXCEPTIONS` в `tests/test_models_metadata.py`; `REVISION_TABLES` в `tests/test_migrations_offline.py` и `tests/db/test_migrations.py`; `ENUM_CHECKS` (CHECK «IN» ↔ перечисление) в `tests/db/test_migrations.py`; межарендные FK — в `tests/db/test_tenant_isolation.py`. db-тесты ограничений — через `tests/db/factories.py:expect_violation` (SAVEPOINT + имя нарушенного ограничения). Ревизия — autogenerate с ручной проверкой, комментарии autogenerate удаляются, docstring на русском. Колонки в DDL: `id`, `tenant_id`, …, `created_at`, `updated_at` (`sort_order` в миксинах); `sort_key` — `TEXT COLLATE "C"`.
+**Reason:** ADR-7.2, 7.3, 7.8, 7.13: alembic check не сравнивает CHECK; одинаковые проверки для всех ревизий 0001–0004.
+**Applies to:** #51, #52, #53, #54 и будущие таблицы (#16, #19, #22, #25).
+**Revisit when:** —
+
+## DEC-010: Инварианты схемы проверяются на реальной БД
+
+**Decision:** `tests/db/test_schema_invariants.py` после `upgrade head` читает схему из `pg_catalog`/`information_schema`: в каждой таблице, кроме `tenants` и `alembic_version`, `tenant_id NOT NULL` — первая колонка полного (не частичного) индекса (обычного, UNIQUE или PK); денежные колонки ADR-7.4 и любые другие `numeric` — `numeric(10,2)`, кроме `NUMERIC_EXCEPTIONS` (`messages.cost_usd`, `menu_item_meta.weight_amount`); `real`/`double precision`/`money` запрещены; нет `timestamp without time zone`, все `*_at` — `timestamptz`. Если PK таблицы не начинается с `tenant_id` и составного UNIQUE с ним нет, нужен индекс `Index(None, "tenant_id", <ключ>)` (так сделано для `menu_item_prices`, `menu_item_meta`). Новая денежная колонка — в `MONEY_COLUMNS`; не-денежная `numeric` — в `NUMERIC_EXCEPTIONS` обоих тестов (метаданных и схемы) с обоснованием. CI (`backend-services`) перед pytest выполняет CLI `alembic upgrade head` / `downgrade base` / `upgrade head` / `check`.
+**Reason:** NFR-1 spec #7, ADR-7.3, ADR-7.4, ADR-7.10; модельный тест не ловит миграцию, разошедшуюся с моделью в том, что не видит `alembic check`.
+**Applies to:** все будущие таблицы и ревизии (#16, #19, #22, #25).
+**Revisit when:** появится законная таблица заведения без `tenant_id` или колонка времени без часового пояса.

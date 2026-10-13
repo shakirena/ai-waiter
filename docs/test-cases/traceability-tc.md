@@ -105,7 +105,7 @@
 | TC-53-004 | Нет IP-адресов, секретов и реальных данных | #53 | AC-6, NFR-6 | High | No | test_seed.py | PASS |
 | TC-53-005 | Ошибки запуска без раскрытия пароля; чужие строки | #53 | AC-6 | High | No | db/test_seed.py, test_seed.py, test_seed_loader.py | PASS |
 | TC-53-006 | AZ-названия аллергенов и блюд проверены носителем | #53 | AC-6 | Low | No | — (ручной) | НЕ ВЫПОЛНЕН |
-| TC-53-007 | Повторный сид при закрытом демо-визите и другом открытом визите | #53 | AC-6 | Medium | No | db/test_seed.py (xfail strict) | FAIL (известный дефект #58, xfail) |
+| TC-53-007 | Повторный сид при закрытом демо-визите и другом открытом визите | #53 | AC-6 | Medium | No | db/test_seed.py | PASS (дефект #58 исправлен) |
 | TC-54-001 | Цикл миграций и alembic check в CI до pytest | #54 | AC-7 | Critical | No | test_repo_artifacts.py, db/test_alembic.py; CI PR #57 | PASS |
 | TC-54-002 | alembic check без расхождений | #54 | AC-7 | Critical | No | db/test_alembic.py, test_migrations_offline.py; CI PR #57 | PASS |
 | TC-54-003 | Инвариант tenant_id на реальной схеме | #54 | AC-7, NFR-1 | Critical | No | db/test_schema_invariants.py, test_models_metadata.py | PASS |

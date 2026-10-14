@@ -75,6 +75,7 @@ EXPECTED_TABLES = {
     "orders",
     "order_items",
     "order_events",
+    "menu_sync_runs",
 }
 
 # Явный список CHECK по таблицам (короткие имена: ck_<table>_<name>).
@@ -130,6 +131,16 @@ EXPECTED_CHECKS: dict[str, set[str]] = {
     },
     "order_items": {"qty", "price_at_order", "comment"},
     "order_events": {"type", "from_status", "to_status", "actor_type", "payload", "status_change"},
+    "menu_sync_runs": {
+        "source",
+        "source_ref",
+        "status",
+        "snapshot_hash",
+        "hash_state",
+        "finished_at",
+        "counts",
+        "issues",
+    },
 }
 
 # Numeric-колонки, которые не являются деньгами гостя NUMERIC(10,2) (ADR-7.4).

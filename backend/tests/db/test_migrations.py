@@ -24,6 +24,8 @@ from sqlalchemy.pool import NullPool
 from app.models.enums import (
     ActorType,
     Lang,
+    MenuSyncSource,
+    MenuSyncStatus,
     MessageRole,
     OrderEventType,
     OrderStatus,
@@ -42,6 +44,7 @@ REVISION_TABLES: dict[str, set[str]] = {
     "0002": {"categories", "menu_items", "menu_item_prices", "menu_item_meta", "allergens", "menu_item_allergens"},
     "0003": {"visits", "messages", "cart_items"},
     "0004": {"orders", "order_items", "order_events"},
+    "0005": {"menu_sync_runs"},
 }
 
 
@@ -108,6 +111,8 @@ ENUM_CHECKS: dict[str, type[StrEnum]] = {
     "ck_order_events_from_status": OrderStatus,
     "ck_order_events_to_status": OrderStatus,
     "ck_order_events_actor_type": ActorType,
+    "ck_menu_sync_runs_source": MenuSyncSource,
+    "ck_menu_sync_runs_status": MenuSyncStatus,
 }
 
 

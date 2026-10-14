@@ -193,8 +193,9 @@ async def test_ac62_scenario(db_session: AsyncSession) -> None:
     assert report.status is MenuSyncStatus.APPLIED
     assert report.dry_run is False
     assert report.issues == []
-    assert report.snapshot_hash is None
-    assert report.run_id is None
+    # #63: применение журналируется — хеш снимка и строка menu_sync_runs (подробно — test_menu_sync_runs.py).
+    assert report.snapshot_hash is not None
+    assert report.run_id is not None
     assert report.items == EntityCounts(created=1, updated=1, hidden=1, restored=1, unchanged=1)
     assert report.categories == EntityCounts(unchanged=1)
     assert report.prices == PriceCounts(created=2, updated=1)

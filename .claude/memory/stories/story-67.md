@@ -39,3 +39,18 @@
 **Тесты:** касса — округление `7.999999` → `8.00`, `price_vip` 0/NULL, `disabled` 1/NULL; приёмка — `python -m app.menu_sync check` → 0, `import --dry-run` в БД разработки
 **Зависимости:** #64 (формат), проверка импортом — #66
 **Arch doc:** docs/arch/feature-8-menu-import.md (раздел «Истории — файлы, тесты, порядок»)
+
+---
+
+## 💻 Разработка (developer)
+
+**Репозиторий:** касса «restoran», ветка `feature/67-ai-export-menu` (от origin/master fb7f374), коммит 8598378
+**Файлы:** `components/MenuSnapshotBuilder.php` (новый), `commands/AiExportMenuController.php` (новый), `tests/codeception/unit/components/MenuSnapshotBuilderTest.php` (новый), `tests/codeception/unit/_bootstrap.php` (алиас `@app`)
+**Реализация:**
+- `MenuSnapshotBuilder`: соответствие A.2 на массивах строк; `fetchRows()` — один SELECT (INNER JOIN type, LEFT JOIN store, цены `CAST AS DECIMAL(16,6)`); `buildRows()`, `formatPrice()` (half-up в целых копейках, без float/printf), `formatVipPrice()` (NULL/≤0 → пусто), `csvLine()` (RFC 4180). Переиспользуется в #18 для `PUT /menu`.
+- `disabled` 0/NULL → в файле, иначе не выгружается; колонки `is_available` нет; `currency` пусто.
+- Текст: невалидный UTF-8 → ошибка; управляющие символы → пробел, края обрезаются.
+- Команда: файл через `.tmp` и rename; коды 0/1 (данные, БД)/2 (аргумент)/3 (запись).
+**Тесты:** codeception unit (PHP 7.1, codeception 2.5.6): 12 tests, 48 assertions, OK. Старые ContactFormTest и LoginFormTest падают и на origin/master (несовместимость yii2-codeception).
+**Локальная выгрузка:** 362 позиции, 20 категорий, 1 не выгружена (disabled), файл в `local-data/`.
+**Отклонения:** собственная запись CSV вместо fputcsv (escape `\` в PHP 7.1); нормализация управляющих символов (в реальном названии была табуляция); AC-7 в spec исправлен — `is_available` не выгружается, `disabled = 1` в файл не попадает.

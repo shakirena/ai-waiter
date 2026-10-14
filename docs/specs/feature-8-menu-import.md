@@ -108,7 +108,7 @@ category_external_id;category_name;category_sort_key;external_id;name;sort_key;s
 ### AC-7 (story #67 — выгрузка «restoran»)
 **Given** база кассы «restoran» с меню, где есть позиция с `price_vip = 0`, позиция с `disabled = 1` и цена во float вида `7.999999`
 **When** оператор запускает `php yii ai-export-menu <путь к ai-waiter>/local-data/menu.csv` (файл пишется в `local-data/` репозитория ai-waiter, вне репозитория кассы), а затем `python -m app.menu_sync check` на результате
-**Then** `check` завершается кодом 0; у позиции с `price_vip = 0` колонка `price_vip` пустая, у отключённой `is_available = 0`, цена `8.00`, а файл лежит в `local-data/` (игнорируется git)
+**Then** `check` завершается кодом 0; у позиции с `price_vip = 0` колонка `price_vip` пустая, позиции с `disabled = 1` в файле нет (колонка `is_available` не выгружается; решение пользователя 2026-10-13 по вопросу 5), цена `8.00`, а файл лежит в `local-data/` (игнорируется git)
 
 ## User Stories
 | Story | Title | Size | Priority | Blocked by |

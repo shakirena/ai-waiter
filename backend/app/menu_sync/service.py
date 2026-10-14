@@ -31,14 +31,22 @@ db-тесты — в откатываемую транзакцию. Порядо
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING, Final
+from collections import defaultdict
+from decimal import Decimal
+from typing import TYPE_CHECKING, Any, Final
 
-from app.menu_sync.plan import CurrentMenu
-from app.menu_sync.report import MenuSyncReport, SyncIssue
-from app.menu_sync.snapshot import MenuSnapshot
-from app.models.enums import MenuSyncSource
+from sqlalchemy import delete, false, func, select, text, tuple_, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+from app.menu_sync.plan import CurrentCategory, CurrentItem, CurrentMenu, ItemWrite, MenuSyncPlan, plan_menu_sync
+from app.menu_sync.report import MenuSyncReport, SyncIssue, has_errors, limit_issues
+from app.menu_sync.snapshot import MenuSnapshot, check_snapshot, resolve_currency
+from app.models.enums import MenuSyncSource, MenuSyncStatus
+from app.models.menu import Category, MenuItem, MenuItemPrice
+from app.models.tenant import Tenant
 
 if TYPE_CHECKING:
+    from sqlalchemy import Table
     from sqlalchemy.ext.asyncio import AsyncSession
 
 # Первый ключ двухаргументного advisory lock — «пространство» синхронизации меню (номер issue).
@@ -59,9 +67,80 @@ class TenantNotFoundError(MenuSyncError):
     """Заведения с таким ``tenant_id`` нет."""
 
 
+async def _acquire_lock(session: AsyncSession, tenant_id: uuid.UUID) -> None:
+    """Транзакционный advisory lock синхронизации меню заведения или ``MenuSyncBusyError`` без ожидания."""
+    acquired = await session.scalar(
+        text("SELECT pg_try_advisory_xact_lock(:namespace, hashtext(CAST(:tenant_id AS text)))"),
+        {"namespace": MENU_SYNC_LOCK_NAMESPACE, "tenant_id": str(tenant_id)},
+    )
+    if not acquired:
+        raise MenuSyncBusyError("синхронизация меню этого заведения уже выполняется")
+
+
+async def _tenant_currency(session: AsyncSession, tenant_id: uuid.UUID) -> str:
+    currency = await session.scalar(select(Tenant.currency).where(Tenant.id == tenant_id))
+    if currency is None:
+        raise TenantNotFoundError("заведение не найдено")
+    return currency
+
+
 async def load_current_menu(session: AsyncSession, tenant_id: uuid.UUID) -> CurrentMenu:
     """Категории, позиции (включая скрытые) и цены заведения; фильтр ``tenant_id`` в каждом запросе."""
-    raise NotImplementedError
+    currency = await _tenant_currency(session, tenant_id)
+    category_rows = await session.execute(
+        select(Category.id, Category.external_id, Category.pos_name, Category.sort_key, Category.is_hidden).where(
+            Category.tenant_id == tenant_id
+        )
+    )
+    categories = {
+        row.external_id: CurrentCategory(
+            id=row.id,
+            external_id=row.external_id,
+            pos_name=row.pos_name,
+            sort_key=row.sort_key,
+            is_hidden=row.is_hidden,
+        )
+        for row in category_rows
+    }
+
+    prices: dict[uuid.UUID, dict[str, Decimal]] = defaultdict(dict)
+    price_rows = await session.execute(
+        select(MenuItemPrice.menu_item_id, MenuItemPrice.price_tier, MenuItemPrice.price).where(
+            MenuItemPrice.tenant_id == tenant_id
+        )
+    )
+    for row in price_rows:
+        prices[row.menu_item_id][row.price_tier] = row.price
+
+    item_rows = await session.execute(
+        select(
+            MenuItem.id,
+            MenuItem.external_id,
+            MenuItem.category_id,
+            MenuItem.pos_name,
+            MenuItem.currency,
+            MenuItem.station,
+            MenuItem.sort_key,
+            MenuItem.is_available,
+            MenuItem.is_hidden,
+        ).where(MenuItem.tenant_id == tenant_id)
+    )
+    items = {
+        row.external_id: CurrentItem(
+            id=row.id,
+            external_id=row.external_id,
+            category_id=row.category_id,
+            pos_name=row.pos_name,
+            currency=row.currency,
+            station=row.station,
+            sort_key=row.sort_key,
+            is_available=row.is_available,
+            is_hidden=row.is_hidden,
+            prices=dict(prices.get(row.id, {})),
+        )
+        for row in item_rows
+    }
+    return CurrentMenu(tenant_id=tenant_id, tenant_currency=currency, categories=categories, items=items)
 
 
 async def last_applied_hash(session: AsyncSession, tenant_id: uuid.UUID) -> str | None:
@@ -85,8 +164,154 @@ async def apply_menu_snapshot(
     Не коммитит. ``dry_run`` — всё, кроме записи (lock тоже берётся: счётчики считаются по
     согласованному состоянию). Ошибки данных возвращаются в отчёте (``rejected``), а не исключением;
     исключения — только ``MenuSyncBusyError``, ``TenantNotFoundError`` и ошибки БД.
+
+    До #63 ``source``, ``source_ref`` и ``force`` не используются (они нужны журналу). Пробный прогон
+    без ошибок возвращает ``applied`` с ``dry_run=True``: так выглядел бы итог применения.
     """
-    raise NotImplementedError
+    await _acquire_lock(session, tenant_id)
+    currency = await _tenant_currency(session, tenant_id)
+    issues = check_snapshot(snapshot, currency)
+    if has_errors(issues):
+        return _report(MenuSyncStatus.REJECTED, dry_run, issues)
+    snapshot = resolve_currency(snapshot, currency)
+
+    current = await load_current_menu(session, tenant_id)
+    plan = plan_menu_sync(current, snapshot, allow_mass_hide=allow_mass_hide)
+    issues.extend(plan.issues)
+    if has_errors(issues):
+        return _report(MenuSyncStatus.REJECTED, dry_run, issues)
+    if not dry_run:
+        await _write_plan(session, tenant_id, plan)
+    return _report(MenuSyncStatus.APPLIED, dry_run, issues, plan)
+
+
+def _report(
+    status: MenuSyncStatus, dry_run: bool, issues: list[SyncIssue], plan: MenuSyncPlan | None = None
+) -> MenuSyncReport:
+    """Отчёт; проблемы — не больше ``MAX_REPORTED_ISSUES`` (``limit_issues``). У отклонённого — нулевые счётчики."""
+    reported, truncated = limit_issues(issues)
+    report = MenuSyncReport(status=status, dry_run=dry_run, issues=reported, issues_truncated=truncated)
+    if plan is not None:
+        report.categories = plan.categories
+        report.items = plan.items
+        report.prices = plan.prices
+        report.availability_changed = plan.availability_changed
+    return report
+
+
+async def _write_plan(session: AsyncSession, tenant_id: uuid.UUID, plan: MenuSyncPlan) -> None:
+    """Пакетная запись плана. ``updated_at`` ставится явно только изменённым строкам: ``onupdate`` ORM на
+    Core-UPSERT не срабатывает, а в ``UPDATE`` ``synced_at`` он подавлен присваиванием ``updated_at``
+    самому себе. Порядок: категории → позиции (составной FK) → цены → скрытие → ``synced_at``."""
+    categories = Category.__table__
+    items = MenuItem.__table__
+    prices = MenuItemPrice.__table__
+
+    if plan.category_writes:
+        stmt = pg_insert(categories)
+        await session.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[categories.c.tenant_id, categories.c.external_id],
+                set_={
+                    "pos_name": stmt.excluded.pos_name,
+                    "sort_key": stmt.excluded.sort_key,
+                    "is_hidden": false(),
+                    "updated_at": func.now(),
+                },
+            ),
+            [
+                {
+                    "id": write.id,
+                    "tenant_id": tenant_id,
+                    "external_id": write.external_id,
+                    "pos_name": write.pos_name,
+                    "sort_key": write.sort_key,
+                    "is_hidden": False,
+                }
+                for write in plan.category_writes
+            ],
+        )
+
+    # is_available=None — колонку не трогать: такие позиции пишутся отдельным пакетом без неё.
+    for with_availability in (True, False):
+        batch = [write for write in plan.item_writes if (write.is_available is not None) == with_availability]
+        if batch:
+            await _upsert_items(session, items, tenant_id, batch, with_availability=with_availability)
+
+    if plan.delete_prices:
+        await session.execute(
+            delete(prices).where(
+                prices.c.tenant_id == tenant_id,
+                tuple_(prices.c.menu_item_id, prices.c.price_tier).in_(plan.delete_prices),
+            )
+        )
+    price_rows = [
+        {"tenant_id": tenant_id, "menu_item_id": write.id, "price_tier": tier, "price": price}
+        for write in plan.item_writes
+        for tier, price in sorted(write.prices.items())
+    ]
+    if price_rows:
+        stmt = pg_insert(prices)
+        await session.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[prices.c.menu_item_id, prices.c.price_tier],
+                set_={"price": stmt.excluded.price, "updated_at": func.now()},
+                where=prices.c.price.is_distinct_from(stmt.excluded.price),
+            ),
+            price_rows,
+        )
+
+    for table, hide_ids in ((categories, plan.hide_category_ids), (items, plan.hide_item_ids)):
+        if hide_ids:
+            await session.execute(
+                update(table)
+                .where(table.c.tenant_id == tenant_id, table.c.id.in_(hide_ids))
+                .values(is_hidden=True, updated_at=func.now())
+            )
+    # В применяемом снимке всегда есть позиции и их категории (пустой отвергнут check_snapshot).
+    for table, present_ids in ((categories, plan.present_category_ids), (items, plan.present_item_ids)):
+        await session.execute(
+            update(table)
+            .where(table.c.tenant_id == tenant_id, table.c.id.in_(present_ids))
+            .values(synced_at=func.now(), updated_at=table.c.updated_at)
+        )
+
+
+async def _upsert_items(
+    session: AsyncSession, items: Table, tenant_id: uuid.UUID, batch: list[ItemWrite], *, with_availability: bool
+) -> None:
+    stmt = pg_insert(items)
+    set_: dict[str, Any] = {
+        "category_id": stmt.excluded.category_id,
+        "pos_name": stmt.excluded.pos_name,
+        "currency": stmt.excluded.currency,
+        "station": stmt.excluded.station,
+        "sort_key": stmt.excluded.sort_key,
+        "is_hidden": false(),
+        "updated_at": func.now(),
+    }
+    if with_availability:
+        set_["is_available"] = stmt.excluded.is_available
+    rows: list[dict[str, Any]] = []
+    for write in batch:
+        row: dict[str, Any] = {
+            "id": write.id,
+            "tenant_id": tenant_id,
+            "category_id": write.category_id,
+            "external_id": write.external_id,
+            "pos_name": write.pos_name,
+            "currency": write.currency,
+            "station": write.station,
+            "sort_key": write.sort_key,
+            "is_hidden": False,
+        }
+        if with_availability:
+            row["is_available"] = write.is_available
+        rows.append(row)
+    await session.execute(
+        stmt.on_conflict_do_update(index_elements=[items.c.tenant_id, items.c.external_id], set_=set_),
+        rows,
+    )
 
 
 async def record_rejected_run(

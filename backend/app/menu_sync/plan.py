@@ -28,7 +28,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Final
 
-from app.menu_sync.report import EntityCounts, PriceCounts, SyncIssue
+from app.db.ids import new_id
+from app.menu_sync.report import EntityCounts, IssueCode, PriceCounts, SyncIssue
 from app.menu_sync.snapshot import MenuSnapshot
 
 # Отказ, если снимок скрывает не меньше MASS_HIDE_MIN_ITEMS позиций и не меньше MASS_HIDE_RATIO
@@ -116,7 +117,157 @@ class MenuSyncPlan:
 def plan_menu_sync(current: CurrentMenu, snapshot: MenuSnapshot, *, allow_mass_hide: bool = False) -> MenuSyncPlan:
     """Построить план применения снимка к текущему меню (правила — в docstring модуля).
 
-    Снимок уже прошёл ``resolve_currency``. Детерминирован при фиксированном ``new_id``
-    (тесты подменяют генератор).
+    Снимок уже прошёл ``check_snapshot`` без ошибок и ``resolve_currency``. Детерминирован при
+    фиксированном ``new_id`` (тесты подменяют генератор).
+
+    Подсчёт: позиция или категория попадает ровно в одно поле ``EntityCounts`` (``restored`` важнее
+    ``updated``); изменение только наличия или только цен — тоже ``updated``. ``availability_changed`` —
+    существующие позиции, у которых снимок меняет ``is_available`` (у новых не считается).
+    ``present_*_ids`` — все строки снимка, включая новые. При ошибке ``mass_hide`` счётчики остаются
+    (для сообщения и проверки), а списки записи очищаются.
     """
-    raise NotImplementedError
+    plan = MenuSyncPlan()
+    category_ids = _plan_categories(plan, current, snapshot)
+    _plan_items(plan, current, snapshot, category_ids)
+
+    visible = sum(1 for item in current.items.values() if not item.is_hidden)
+    hidden = len(plan.hide_item_ids)
+    if not allow_mass_hide and is_mass_hide(hidden, visible):
+        plan.issues.append(
+            SyncIssue(
+                IssueCode.MASS_HIDE,
+                f"снимок скрыл бы {hidden} из {visible} видимых позиций; если это верно, повторите "
+                "с разрешением массового скрытия (--allow-mass-hide)",
+                column="items",
+                value=str(hidden),
+            )
+        )
+        _clear_writes(plan)
+    return plan
+
+
+def is_mass_hide(hidden: int, visible: int) -> bool:
+    """Скрывается не меньше ``MASS_HIDE_MIN_ITEMS`` позиций и не меньше ``MASS_HIDE_RATIO`` от видимых."""
+    return hidden >= MASS_HIDE_MIN_ITEMS and Decimal(hidden) >= MASS_HIDE_RATIO * visible
+
+
+def _plan_categories(plan: MenuSyncPlan, current: CurrentMenu, snapshot: MenuSnapshot) -> dict[str, uuid.UUID]:
+    """Категории снимка → записи и счётчики; возвращает ``external_id`` → ``id`` (новым — из ``new_id``)."""
+    ids: dict[str, uuid.UUID] = {}
+    for category in snapshot.categories:
+        existing = current.categories.get(category.external_id)
+        if existing is None:
+            category_id = new_id()
+            plan.categories.created += 1
+            write = True
+        else:
+            category_id = existing.id
+            changed = existing.pos_name != category.name or existing.sort_key != category.sort_key
+            write = existing.is_hidden or changed
+            if existing.is_hidden:
+                plan.categories.restored += 1
+            elif changed:
+                plan.categories.updated += 1
+            else:
+                plan.categories.unchanged += 1
+        ids[category.external_id] = category_id
+        plan.present_category_ids.append(category_id)
+        if write:
+            plan.category_writes.append(
+                CategoryWrite(
+                    id=category_id,
+                    external_id=category.external_id,
+                    pos_name=category.name,
+                    sort_key=category.sort_key,
+                )
+            )
+    for external_id, existing in current.categories.items():
+        if external_id not in ids and not existing.is_hidden:
+            plan.hide_category_ids.append(existing.id)
+            plan.categories.hidden += 1
+    return ids
+
+
+def _plan_items(
+    plan: MenuSyncPlan, current: CurrentMenu, snapshot: MenuSnapshot, category_ids: dict[str, uuid.UUID]
+) -> None:
+    """Позиции и цены снимка → записи, удаления тарифов и счётчики; пропавшие видимые → скрыть."""
+    seen: set[str] = set()
+    for item in snapshot.items:
+        seen.add(item.external_id)
+        existing = current.items.get(item.external_id)
+        prices = dict(item.prices)
+        write = ItemWrite(
+            id=existing.id if existing is not None else new_id(),
+            external_id=item.external_id,
+            category_id=category_ids[item.category_external_id],
+            pos_name=item.name,
+            currency=item.currency or current.tenant_currency,
+            station=item.station,
+            sort_key=item.sort_key,
+            is_available=item.is_available,
+            prices=prices,
+        )
+        plan.present_item_ids.append(write.id)
+        if existing is None:
+            plan.items.created += 1
+            plan.prices.created += len(prices)
+            plan.item_writes.append(write)
+            continue
+
+        prices_changed = _plan_prices(plan, existing, prices)
+        availability_changed = item.is_available is not None and item.is_available != existing.is_available
+        if availability_changed:
+            plan.availability_changed += 1
+        changed = (
+            prices_changed
+            or availability_changed
+            or existing.pos_name != write.pos_name
+            or existing.category_id != write.category_id
+            or existing.currency != write.currency
+            or existing.station != write.station
+            or existing.sort_key != write.sort_key
+        )
+        if existing.is_hidden:
+            plan.items.restored += 1
+        elif changed:
+            plan.items.updated += 1
+        else:
+            plan.items.unchanged += 1
+        if existing.is_hidden or changed:
+            plan.item_writes.append(write)
+
+    for external_id, existing in current.items.items():
+        if external_id not in seen and not existing.is_hidden:
+            plan.hide_item_ids.append(existing.id)
+            plan.items.hidden += 1
+
+
+def _plan_prices(plan: MenuSyncPlan, existing: CurrentItem, prices: dict[str, Decimal]) -> bool:
+    """Счётчики и удаления тарифов существующей позиции; ``True``, если цены изменились."""
+    changed = False
+    for tier, price in prices.items():
+        old = existing.prices.get(tier)
+        if old is None:
+            plan.prices.created += 1
+            changed = True
+        elif old != price:
+            plan.prices.updated += 1
+            changed = True
+    for tier in sorted(existing.prices):
+        if tier not in prices:
+            plan.delete_prices.append((existing.id, tier))
+            plan.prices.deleted += 1
+            changed = True
+    return changed
+
+
+def _clear_writes(plan: MenuSyncPlan) -> None:
+    """План с ошибкой не применяется: списков записи нет, счётчики остаются для отчёта."""
+    plan.category_writes.clear()
+    plan.item_writes.clear()
+    plan.hide_category_ids.clear()
+    plan.hide_item_ids.clear()
+    plan.delete_prices.clear()
+    plan.present_category_ids.clear()
+    plan.present_item_ids.clear()

@@ -34,3 +34,29 @@
 **Тесты:** unit `tests/test_menu_csv.py` (AC #64 и список из arch doc); граница: `app/menu_sync/files` без `sqlalchemy`/`app.db`/`app.models` (кроме `enums`)
 **Зависимости:** #61; новых пакетов нет (стандартный `csv`)
 **Arch doc:** docs/arch/feature-8-menu-import.md (раздел «Истории — файлы, тесты, порядок»)
+
+---
+
+## 💻 Разработка (developer)
+
+**Branch:** story/64-menu-import (worktree s64, от feature/8-menu-import на c7bec9c)
+**Новые файлы:**
+- backend/tests/test_menu_csv.py
+
+**Изменённые файлы:**
+- backend/app/menu_sync/files/__init__.py — `detect_format`, `parse_menu_bytes`, `read_menu_file` (stat до чтения + чтение не больше `MAX_FILE_BYTES + 1`), `locate_issues`; `ParsedMenuFile.file_format: FileFormat | None`, новое поле `issues_truncated`, свойство `has_errors`; XLSX — ветка в `_read_table` с `unsupported_format` (точка подключения #65)
+- backend/app/menu_sync/files/format.py — `CellError(code, message)`, `cell_to_*`, `parse_header`, `rows_to_snapshot`, `file_column`; `ColumnLayout.ignored` (колонки `#…`)
+- backend/app/menu_sync/files/csv_reader.py — `read_csv_table`, `detect_delimiter`
+- backend/tests/test_import_boundaries.py — `files` без прямых импортов `sqlalchemy`/`app.db`/`app.models` (кроме `enums`)
+- README.md — раздел «Импорт меню из файла» / «Формат файла меню»
+
+**Решения:**
+- Строка с ошибкой в ячейке или с повтором `external_id` в модель снимка не передаётся (одна причина — одно сообщение); остальные строки проверяются моделью `MenuSnapshot`, ошибки Pydantic получают строку по индексу элемента и колонку файла (`prices.vip` → `price_vip`, поля категории → `category_*`, строка — первая строка категории).
+- Валюта заведения в разборе файла неизвестна: `currency_mismatch` и `zero_price` даёт `check_snapshot` при применении; `locate_issues(issues, item_rows)` добавляет к ним строку и колонку файла (для CLI #66).
+- Имена колонок без учёта регистра, кроме имени тарифа: `price_VIP` → `invalid_tier` (ADR-8.2 требует, чтобы такая опечатка не пропала молча); `price_default` — в любом регистре.
+- Колонка с пустым заголовком допустима, если пуста во всех строках (Excel дописывает пустые колонки); значение в ней или за последней колонкой заголовка — `unknown_column` («колонка N»).
+- Нарушение кавычек CSV — `unsupported_format` с номером строки (новых `IssueCode` нет). `csv.field_size_limit` не меняется (глобальное состояние процесса): лимит 1000 символов проверяет `format`, поле > 128 КиБ — ошибка разбора CSV.
+- Список проблем ограничен `limit_issues` (100), остаток — `ParsedMenuFile.issues_truncated`.
+- Транзитивно `app.models.enums` загружает пакет `app.models` с ORM (его `__init__`); граница проверяется по прямым импортам.
+
+**Build:** ruff check / format OK · pytest -m "not db": 1101 passed, 3 skipped (db-тесты не запускались — общая тестовая БД занята #62) · покрытие `files/__init__.py`, `csv_reader.py`, `format.py` — 100 % (ветви включены)

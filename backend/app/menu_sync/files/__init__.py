@@ -24,12 +24,11 @@ from typing import Final
 
 from app.menu_sync.files.csv_reader import read_csv_table
 from app.menu_sync.files.format import TabularData, file_column, rows_to_snapshot
+from app.menu_sync.files.xlsx_reader import ZIP_SIGNATURE, read_xlsx_table
 from app.menu_sync.report import IssueCode, SyncIssue, has_errors, limit_issues
 from app.menu_sync.snapshot import MenuSnapshot
 
 MAX_FILE_BYTES: Final[int] = 5 * 1024 * 1024
-# Сигнатура zip (XLSX — zip-архив Office Open XML).
-ZIP_SIGNATURE: Final[bytes] = b"PK\x03\x04"
 UNSUPPORTED_HINT: Final[str] = "поддерживаются только .csv (UTF-8) и .xlsx; сохраните файл в одном из этих форматов"
 
 
@@ -103,11 +102,10 @@ def _too_large(filename: str) -> ParsedMenuFile:
 
 
 def _read_table(file_format: FileFormat, data: bytes, sheet: str | None) -> tuple[TabularData | None, list[SyncIssue]]:
-    """Читатель по формату. XLSX подключается в #65 (``xlsx_reader.read_xlsx_table(data, sheet=sheet)``)."""
+    """Читатель по формату; ``sheet`` — только для XLSX."""
     if file_format is FileFormat.CSV:
         return read_csv_table(data)
-    message = "формат .xlsx пока не поддерживается: сохраните файл как «CSV UTF-8»"
-    return None, [SyncIssue(IssueCode.UNSUPPORTED_FORMAT, message, value=sheet)]
+    return read_xlsx_table(data, sheet=sheet)
 
 
 def parse_menu_bytes(data: bytes, filename: str, *, sheet: str | None = None) -> ParsedMenuFile:

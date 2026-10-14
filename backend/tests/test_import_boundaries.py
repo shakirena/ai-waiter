@@ -16,6 +16,7 @@ RESTRICTED: dict[str, tuple[str, ...]] = {
     "redis": ("core/scaled/",),
     "arq": ("core/scaled/",),
     "apscheduler": ("core/single/",),
+    "openpyxl": ("menu_sync/files/xlsx_reader.py",),  # ADR-8.7 (#65)
 }
 
 

@@ -106,3 +106,44 @@ def test_core_does_not_import_menu_sync() -> None:
         if _imports_any(path, ("app.menu_sync",))
     ]
     assert offenders == []
+
+
+def test_menu_sync_files_do_not_import_database() -> None:
+    """Файловый коннектор работает без БД (DEC-011, ADR-8.2): прямых импортов SQLAlchemy, ``app.db`` и
+    моделей нет; из ``app.models`` допустим только ``app.models.enums`` (перечисления и шаблоны).
+
+    Транзитивно ``app.models.enums`` загружает пакет ``app.models`` (его ``__init__``), это не нарушение
+    границы: разбор файла не обращается к ORM и сессии.
+    """
+    files = list((APP_DIR / "menu_sync" / "files").rglob("*.py"))
+    assert {path.name for path in files} >= {"__init__.py", "format.py", "csv_reader.py"}
+    offenders = {}
+    for path in files:
+        forbidden = sorted(
+            name
+            for name in _imported_modules(path)
+            if _imports_any_name(name, ("sqlalchemy", "app.db", "app.models"))
+            and not _imports_any_name(name, ("app.models.enums",))
+        )
+        if forbidden:
+            offenders[path.relative_to(APP_DIR).as_posix()] = forbidden
+    assert offenders == {}
+
+
+def _imports_any_name(name: str, prefixes: tuple[str, ...]) -> bool:
+    return any(name == p or name.startswith(f"{p}.") for p in prefixes)
+
+
+def test_files_boundary_scanner_detects_database_imports(tmp_path: Path) -> None:
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        "from sqlalchemy import select\nfrom app.models.menu import MenuItem\nfrom app.models.enums import X\n",
+        encoding="utf-8",
+    )
+    names = _imported_modules(sample)
+    assert any(_imports_any_name(n, ("sqlalchemy",)) for n in names)
+    models = [n for n in names if _imports_any_name(n, ("app.models",))]
+    assert sorted(n for n in models if not _imports_any_name(n, ("app.models.enums",))) == [
+        "app.models.menu",
+        "app.models.menu.MenuItem",
+    ]

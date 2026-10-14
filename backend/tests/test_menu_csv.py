@@ -695,7 +695,7 @@ def test_unsupported_format() -> None:
     assert ".xlsx" in result.issues[0].message
 
 
-def test_xlsx_not_supported_yet() -> None:
+def test_damaged_xlsx_is_unsupported_format() -> None:
     result = parse_menu_bytes(b"PK\x03\x04data", "menu.xlsx", sheet="Menu")
     assert result.file_format is FileFormat.XLSX
     assert codes(result) == [IssueCode.UNSUPPORTED_FORMAT]

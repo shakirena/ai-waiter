@@ -89,8 +89,20 @@ FALSE_VALUES: Final[frozenset[str]] = frozenset({"0", "false", "no"})
 # Шум двоичной дроби float из XLSX, который округляется до двух знаков (0.1 + 0.2).
 FLOAT_NOISE: Final[float] = 1e-9
 
+
+@dataclass(frozen=True, slots=True)
+class CellProblem:
+    """Ячейка, значение которой читатель получить не смог (XLSX: ошибка Excel ``#N/A``, формула без
+    сохранённого значения, длительность). Преобразователи ``cell_to_*`` дают ``CellError`` с этим
+    кодом, поэтому проблема попадает в отчёт со строкой и колонкой, а в колонке-комментарии ``#…``
+    игнорируется, как любое её значение."""
+
+    code: IssueCode
+    message: str
+
+
 # Значение ячейки от читателя: CSV даёт только str; XLSX — типизированные значения openpyxl.
-Cell = str | int | float | Decimal | bool | datetime | date | time | None
+Cell = str | int | float | Decimal | bool | datetime | date | time | CellProblem | None
 
 _TIER_RE: Final[re.Pattern[str]] = re.compile(PRICE_TIER_PATTERN)
 _MONEY_CODES: Final[dict[MoneyErrorReason, IssueCode]] = {
@@ -142,6 +154,9 @@ class ColumnLayout:
 
 
 def _check_not_temporal(cell: Cell, code: IssueCode = IssueCode.INVALID_CELL_TYPE) -> None:
+    """Дата/время → ``CellError(code)``; ``CellProblem`` от читателя → ``CellError`` с её кодом."""
+    if isinstance(cell, CellProblem):
+        raise CellError(cell.code, cell.message)
     if isinstance(cell, datetime | date | time):
         raise CellError(code, "дата или время вместо значения: проверьте формат ячейки")
 

@@ -31,7 +31,6 @@ MAX_ISSUE_MESSAGE_CHARS: Final[int] = 500
 # bidi-переключатели, zero-width, BOM. В тексте проблемы они показываются экранированными
 # (escape-последовательности x1b, u202e с обратной косой), чтобы не управлять терминалом CLI
 # и не переставлять текст в админке.
-# и не переставлять текст в админке.
 INVISIBLE_CATEGORIES: Final[frozenset[str]] = frozenset({"Cc", "Cf", "Zl", "Zp"})
 
 

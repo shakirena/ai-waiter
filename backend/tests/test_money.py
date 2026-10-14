@@ -48,6 +48,13 @@ def test_parse_money_accepts(raw: object, expected: str) -> None:
         ([1], MoneyErrorReason.INVALID),
         ("", MoneyErrorReason.INVALID),
         ("abc", MoneyErrorReason.INVALID),
+        # Только ASCII-цифры: полноширинные «１２.00», арабско-индийские и деванагари — ошибка.
+        (chr(0xFF11) + chr(0xFF12) + ".00", MoneyErrorReason.INVALID),
+        (chr(0x0668), MoneyErrorReason.INVALID),
+        ("1" + chr(0x0966) + ".50", MoneyErrorReason.INVALID),
+        ("8." + chr(0xFF15) + chr(0xFF10), MoneyErrorReason.INVALID),
+        ("-" + chr(0xFF11), MoneyErrorReason.INVALID),
+        (chr(0xFF11) * 9, MoneyErrorReason.INVALID),
         (" 8.50", MoneyErrorReason.INVALID),
         ("8.50 ", MoneyErrorReason.INVALID),
         ("8,50", MoneyErrorReason.INVALID),

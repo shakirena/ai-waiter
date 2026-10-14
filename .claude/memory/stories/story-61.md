@@ -58,3 +58,15 @@
 - `Decimal("8.500")` принимается (то же значение, без округления); строка `"8.505"` и `Decimal("8.505")` — `too_many_decimals`; `bool` отвергается.
 
 **Build:** ruff check / format OK · pytest 1171 passed, 3 skipped (с db) · покрытие money.py, report.py — 100 %, snapshot.py — 99 % (не покрыта только заглушка `snapshot_hash`)
+
+---
+
+## 🔒 Security Review
+
+**Verdict:** PASS (security:passed), 2026-10-14, коммит c7bec9c
+**Findings:** CRITICAL 0 · HIGH 0 · MEDIUM 1 · LOW 2 · INFO 2 — все MEDIUM/LOW исправлены в fix(#61)
+**Комментарий:** https://github.com/shakirena/ai-waiter/issues/61#issuecomment-6162529046
+- MEDIUM: `SyncIssue` санитизирует все текстовые поля в `__post_init__` (`safe_text`: экранирование Cc/Cf/Zl/Zp, обрезка): `message` ≤ 500, `column` ≤ 100, `external_id` ≤ 64 (`MAX_ISSUE_EXTERNAL_ID_CHARS` = `EXTERNAL_ID_MAX`), `value` ≤ 60; имена тарифов не попадают в `message`, только в `value`.
+- LOW: деньги — только ASCII-цифры `[0-9]` (`\d` принимал «１２»).
+- LOW: `NO_CONTROL_CHARS_PATTERN` = `^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]*$` (движок Rust в Pydantic): U+0085, U+2028/2029, bidi, zero-width, BOM. В Python-коде — `report.INVISIBLE_CATEGORIES` (модуль `re` не знает `\p{..}`). BOM в начале CSV снимает разборщик #64 до проверки.
+**INFO:** `limit_issues` (≤ 100) должен вызываться в #62/#64.

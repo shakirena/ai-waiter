@@ -41,11 +41,17 @@ SORT_KEY_MAX: Final[int] = 64
 MAX_CATEGORIES: Final[int] = 500
 MAX_ITEMS: Final[int] = 5000
 MAX_TIERS_PER_ITEM: Final[int] = 10
-# Строка без управляющих символов (U+0000–U+001F, U+007F).
-NO_CONTROL_CHARS_PATTERN: Final[str] = r"^[^\x00-\x1f\x7f]*$"
+# Строка без невидимых и управляющих символов — категории Unicode Cc (C0, DEL, C1 с U+0085),
+# Cf (bidi U+202A–U+202E, U+2066–U+2069, zero-width U+200B–U+200D, BOM U+FEFF), Zl (U+2028), Zp (U+2029).
+# Синтаксис ``\p{..}`` — движок regex Pydantic (Rust); модуль ``re`` его не понимает, поэтому в Python-коде
+# та же проверка — ``report.INVISIBLE_CATEGORIES``. BOM в начале CSV-файла снимает разборщик (#64) раньше.
+NO_CONTROL_CHARS_PATTERN: Final[str] = r"^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]*$"
 # Типы собственных ошибок Pydantic (``PydanticCustomError``) валидатора тарифов.
 MISSING_DEFAULT_PRICE_ERROR: Final[str] = "missing_default_price"
 INVALID_TIER_ERROR: Final[str] = "invalid_price_tier"
+_INVALID_TIER_REASON: Final[str] = (
+    "недопустимое имя тарифа: строчные латинские буквы, цифры и «_», с буквы, до 32 символов"
+)
 
 _TIER_RE: Final[re.Pattern[str]] = re.compile(PRICE_TIER_PATTERN)
 _ZERO: Final[Decimal] = Decimal(0)
@@ -91,9 +97,8 @@ class SnapshotItem(_SnapshotModel):
         """
         invalid = sorted(tier for tier in prices if not _TIER_RE.fullmatch(tier))
         if invalid:
-            raise PydanticCustomError(
-                INVALID_TIER_ERROR, "недопустимое имя тарифа: {tiers}", {"tiers": ", ".join(invalid)}
-            )
+            # Имена тарифов — входные данные: в отчёт они идут через ``value`` (обрезка, экранирование).
+            raise PydanticCustomError(INVALID_TIER_ERROR, _INVALID_TIER_REASON, {"tiers": ", ".join(invalid)})
         if DEFAULT_PRICE_TIER not in prices:
             raise PydanticCustomError(MISSING_DEFAULT_PRICE_ERROR, "нет цены тарифа default")
         return prices
@@ -186,13 +191,17 @@ def _code_and_reason(error: ErrorDetails, field: str | None) -> tuple[IssueCode,
             field = f"prices.{DEFAULT_PRICE_TIER}"
         return code, reason, field
     if kind == INVALID_TIER_ERROR:
-        return IssueCode.INVALID_TIER, f"недопустимое имя тарифа: {ctx.get('tiers')}", field
+        return IssueCode.INVALID_TIER, _INVALID_TIER_REASON, field
     if kind == "string_too_long":
         return IssueCode.TOO_LONG, f"длиннее {ctx.get('max_length')} символов", field
     if kind == "string_pattern_mismatch":
         if ctx.get("pattern") == CURRENCY_PATTERN:
             return IssueCode.INVALID_CURRENCY, "валюта — три заглавные латинские буквы ISO 4217 (AZN)", field
-        return IssueCode.CONTROL_CHARS, "недопустимые управляющие символы (перевод строки, табуляция)", field
+        return (
+            IssueCode.CONTROL_CHARS,
+            "недопустимые управляющие или невидимые символы (перевод строки, табуляция, bidi, zero-width)",
+            field,
+        )
     if kind == "too_long":
         noun = _COLLECTION_NOUNS.get(field or "", "элементов")
         code = IssueCode.TOO_MANY_COLUMNS if field == "prices" else IssueCode.TOO_MANY_ROWS

@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-import re
+import unicodedata
 import uuid
 from dataclasses import asdict, dataclass, field
 from decimal import Decimal
@@ -22,8 +22,43 @@ from app.models.enums import MenuSyncStatus
 MAX_REPORTED_ISSUES: Final[int] = 100
 # Значение ячейки в сообщении обрезается до этой длины.
 MAX_ISSUE_VALUE_CHARS: Final[int] = 60
-# Управляющие символы в значении показываются экранированными (\x00), а не как есть.
-_CONTROL_CHARS_RE: Final[re.Pattern[str]] = re.compile(r"[\x00-\x1f\x7f]")
+# external_id в проблеме: = snapshot.EXTERNAL_ID_MAX (= CHECK в БД), чтобы допустимый id не обрезался.
+MAX_ISSUE_EXTERNAL_ID_CHARS: Final[int] = 64
+# Поле (колонка, путь в снимке: в нём бывают ключи из входных данных) и текст сообщения.
+MAX_ISSUE_COLUMN_CHARS: Final[int] = 100
+MAX_ISSUE_MESSAGE_CHARS: Final[int] = 500
+# Невидимые и управляющие символы (Unicode Cc, Cf, Zl, Zp): C0/C1, DEL, U+0085, U+2028/U+2029,
+# bidi-переключатели, zero-width, BOM. В тексте проблемы они показываются экранированными
+# (escape-последовательности x1b, u202e с обратной косой), чтобы не управлять терминалом CLI
+# и не переставлять текст в админке.
+# и не переставлять текст в админке.
+INVISIBLE_CATEGORIES: Final[frozenset[str]] = frozenset({"Cc", "Cf", "Zl", "Zp"})
+
+
+def escape_invisible(text: str) -> str:
+    """Заменить символы категорий ``INVISIBLE_CATEGORIES`` на ``\\xNN``/``\\uNNNN``/``\\UNNNNNNNN``."""
+    parts: list[str] = []
+    for char in text:
+        if unicodedata.category(char) not in INVISIBLE_CATEGORIES:
+            parts.append(char)
+            continue
+        code = ord(char)
+        if code <= 0xFF:
+            parts.append(f"\\x{code:02x}")
+        elif code <= 0xFFFF:
+            parts.append(f"\\u{code:04x}")
+        else:
+            parts.append(f"\\U{code:08x}")
+    return "".join(parts)
+
+
+def safe_text(text: str, max_chars: int) -> str:
+    """Экранировать невидимые символы и обрезать до ``max_chars`` (с «…» на конце)."""
+    # Сначала обрезка по исходной длине: экранирование гигантской строки не нужно.
+    escaped = escape_invisible(text[: max_chars + 1])
+    if len(escaped) > max_chars:
+        escaped = escaped[: max_chars - 1] + "…"
+    return escaped
 
 
 class Severity(StrEnum):
@@ -72,7 +107,7 @@ class IssueCode(StrEnum):
 
 
 def issue_value(value: object) -> str | None:
-    """Значение для ``SyncIssue.value``: только скаляры; управляющие символы экранируются, длина ≤ 60.
+    """Значение для ``SyncIssue.value``: только скаляры; невидимые символы экранируются, длина ≤ 60.
 
     Составные значения (словарь, список) не показываются — ``None``.
     """
@@ -84,10 +119,7 @@ def issue_value(value: object) -> str | None:
         text = str(value)
     else:
         return None
-    text = _CONTROL_CHARS_RE.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
-    if len(text) > MAX_ISSUE_VALUE_CHARS:
-        text = text[: MAX_ISSUE_VALUE_CHARS - 1] + "…"
-    return text
+    return safe_text(text, MAX_ISSUE_VALUE_CHARS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,7 +135,13 @@ class SyncIssue:
     value: str | None = None  # обрезано до MAX_ISSUE_VALUE_CHARS
 
     def __post_init__(self) -> None:
-        # Защита от длинного или «невидимого» значения, кто бы ни создал проблему.
+        # Все текстовые поля могут нести входные данные: длина ограничена, невидимые символы
+        # экранированы, кто бы ни создал проблему (снимок, разбор файла, план).
+        object.__setattr__(self, "message", safe_text(self.message, MAX_ISSUE_MESSAGE_CHARS))
+        if self.column is not None:
+            object.__setattr__(self, "column", safe_text(self.column, MAX_ISSUE_COLUMN_CHARS))
+        if self.external_id is not None:
+            object.__setattr__(self, "external_id", safe_text(self.external_id, MAX_ISSUE_EXTERNAL_ID_CHARS))
         if self.value is not None:
             object.__setattr__(self, "value", issue_value(self.value))
 

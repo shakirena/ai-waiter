@@ -24,13 +24,14 @@ from pydantic import BeforeValidator, PlainSerializer
 # Максимум NUMERIC(10,2): 8 знаков до точки, 2 после.
 MONEY_MAX: Final[Decimal] = Decimal("99999999.99")
 # Строковая форма в JSON API: 1–8 цифр, затем необязательные «.» и 1–2 цифры.
-MONEY_PATTERN: Final[str] = r"^\d{1,8}(\.\d{1,2})?$"
+# Только ASCII-цифры [0-9]: ``\d`` в ``re`` принял бы и «１２» (полноширинные), и арабско-индийские.
+MONEY_PATTERN: Final[str] = r"^[0-9]{1,8}(\.[0-9]{1,2})?$"
 
 _MONEY_RE: Final[re.Pattern[str]] = re.compile(MONEY_PATTERN)
 # Похоже на число, но с лишними знаками после точки или лишними цифрами до неё.
-_TOO_MANY_DECIMALS_RE: Final[re.Pattern[str]] = re.compile(r"^\d+\.\d{3,}$")
-_TOO_LARGE_RE: Final[re.Pattern[str]] = re.compile(r"^\d{9,}(\.\d{1,2})?$")
-_NEGATIVE_RE: Final[re.Pattern[str]] = re.compile(r"^-\d+(\.\d+)?$")
+_TOO_MANY_DECIMALS_RE: Final[re.Pattern[str]] = re.compile(r"^[0-9]+\.[0-9]{3,}$")
+_TOO_LARGE_RE: Final[re.Pattern[str]] = re.compile(r"^[0-9]{9,}(\.[0-9]{1,2})?$")
+_NEGATIVE_RE: Final[re.Pattern[str]] = re.compile(r"^-[0-9]+(\.[0-9]+)?$")
 _CENT: Final[Decimal] = Decimal("0.01")
 
 

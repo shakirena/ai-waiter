@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import re
+import unicodedata
 from decimal import Decimal
 from typing import Any
 
@@ -16,6 +17,9 @@ import pytest
 from pydantic import ValidationError
 
 from app.menu_sync.report import (
+    MAX_ISSUE_COLUMN_CHARS,
+    MAX_ISSUE_EXTERNAL_ID_CHARS,
+    MAX_ISSUE_MESSAGE_CHARS,
     MAX_ISSUE_VALUE_CHARS,
     MAX_REPORTED_ISSUES,
     EntityCounts,
@@ -23,11 +27,14 @@ from app.menu_sync.report import (
     MenuSyncReport,
     Severity,
     SyncIssue,
+    escape_invisible,
     has_errors,
     issue_value,
     limit_issues,
+    safe_text,
 )
 from app.menu_sync.snapshot import (
+    EXTERNAL_ID_MAX,
     MAX_CATEGORIES,
     MAX_ITEMS,
     MAX_TIERS_PER_ITEM,
@@ -136,8 +143,8 @@ def test_snapshot_json_uses_money_strings() -> None:
         (lambda d: d["items"][0].update(name="x" * 201), IssueCode.TOO_LONG, "name", "101"),
         (lambda d: d["items"][0].update(name="Dol\nma"), IssueCode.CONTROL_CHARS, "name", "101"),
         (lambda d: d["items"][0].update(station="Bar\tA"), IssueCode.CONTROL_CHARS, "station", "101"),
-        (lambda d: d["items"][0].update(external_id="1\x7f"), IssueCode.CONTROL_CHARS, "external_id", "1\x7f"),
-        (lambda d: d["items"][0].update(external_id="9" * 65), IssueCode.TOO_LONG, "external_id", "9" * 65),
+        (lambda d: d["items"][0].update(external_id="1\x7f"), IssueCode.CONTROL_CHARS, "external_id", "1\\x7f"),
+        (lambda d: d["items"][0].update(external_id="9" * 65), IssueCode.TOO_LONG, "external_id", "9" * 63 + "…"),
         (lambda d: d["items"][0].update(external_id=157), IssueCode.INVALID_CELL_TYPE, "external_id", "157"),
         (lambda d: d["items"][0].update(currency="azn"), IssueCode.INVALID_CURRENCY, "currency", "101"),
         (lambda d: d["items"][0].update(is_available="maybe"), IssueCode.INVALID_BOOL, "is_available", "101"),
@@ -203,7 +210,7 @@ def test_category_error_is_marked_in_message() -> None:
 def test_invalid_tier_lists_all_bad_names() -> None:
     issue = _single_issue(_data(_item("101", prices={"default": "1", "VIP": "2", "1x": "3"})))
     assert issue.value == "1x, VIP"
-    assert "1x, VIP" in issue.message
+    assert "VIP" not in issue.message  # входные данные — только в value (security review #61)
 
 
 def test_float_price_value_is_shown() -> None:
@@ -490,3 +497,137 @@ def test_menu_sync_report_run_id_is_string() -> None:
     run_id = uuid.uuid4()
     report = MenuSyncReport(status=MenuSyncStatus.APPLIED, dry_run=False, snapshot_hash="a" * 64, run_id=run_id)
     assert report.to_dict()["run_id"] == str(run_id)
+
+
+# ---------------------------------------------------------------- security review #61: текст проблем
+
+ESC = chr(0x1B)
+INVISIBLE = {"Cc", "Cf", "Zl", "Zp"}
+
+
+def _has_invisible(text: str) -> bool:
+    return any(unicodedata.category(ch) in INVISIBLE for ch in text)
+
+
+def _assert_safe(issue: SyncIssue) -> None:
+    """Ни одно текстовое поле проблемы не несёт невидимых символов и не длиннее лимита."""
+    assert not _has_invisible(issue.message)
+    assert len(issue.message) <= MAX_ISSUE_MESSAGE_CHARS
+    if issue.column is not None:
+        assert not _has_invisible(issue.column)
+        assert len(issue.column) <= MAX_ISSUE_COLUMN_CHARS
+    if issue.external_id is not None:
+        assert not _has_invisible(issue.external_id)
+        assert len(issue.external_id) <= MAX_ISSUE_EXTERNAL_ID_CHARS
+    if issue.value is not None:
+        assert not _has_invisible(issue.value)
+        assert len(issue.value) <= MAX_ISSUE_VALUE_CHARS
+
+
+def test_external_id_limit_matches_snapshot_limit() -> None:
+    """Допустимый external_id (до 64 символов) в отчёте не обрезается."""
+    assert MAX_ISSUE_EXTERNAL_ID_CHARS == EXTERNAL_ID_MAX
+    issue = SyncIssue(IssueCode.REQUIRED, "x", external_id="9" * EXTERNAL_ID_MAX)
+    assert issue.external_id == "9" * EXTERNAL_ID_MAX
+
+
+def test_sync_issue_truncates_huge_external_id() -> None:
+    issue = SyncIssue(IssueCode.TOO_LONG, "x", external_id="1" * 100_000)
+    assert issue.external_id is not None
+    assert len(issue.external_id) == MAX_ISSUE_EXTERNAL_ID_CHARS
+    assert issue.external_id.endswith("…")
+
+
+def test_sync_issue_escapes_terminal_sequence_in_external_id() -> None:
+    issue = SyncIssue(IssueCode.REQUIRED, "x", external_id=ESC + "[2J")
+    assert issue.external_id == "\\x1b[2J"
+
+
+def test_sync_issue_sanitizes_message_and_column() -> None:
+    issue = SyncIssue(IssueCode.UNKNOWN_COLUMN, "m" * 1000 + ESC, column=ESC + "c" * 1000)
+    _assert_safe(issue)
+    assert issue.column is not None
+    assert issue.column.startswith("\\x1b")
+    assert issue.message.endswith("…")
+
+
+def test_parse_snapshot_huge_external_id_is_truncated_in_report() -> None:
+    issue = _single_issue(_data(_item("1" * 100_000, name="A")))
+    assert (issue.code, issue.column) == (IssueCode.TOO_LONG, "external_id")
+    _assert_safe(issue)
+    assert issue.external_id == "1" * (MAX_ISSUE_EXTERNAL_ID_CHARS - 1) + "…"
+
+
+def test_parse_snapshot_external_id_with_escape_sequence() -> None:
+    issue = _single_issue(_data(_item(ESC + "[2J", name="A")))
+    assert issue.code is IssueCode.CONTROL_CHARS
+    assert issue.external_id == "\\x1b[2J"
+    assert issue.value == "\\x1b[2J"
+
+
+def test_parse_snapshot_long_tier_names_with_escape_are_not_in_message() -> None:
+    names = [f"{ESC}[31m{'x' * 1000}{i}" for i in range(MAX_TIERS_PER_ITEM)]
+    issue = _single_issue(_data(_item("101", prices=dict.fromkeys(names, "1.00"))))
+    assert (issue.code, issue.column, issue.external_id) == (IssueCode.INVALID_TIER, "prices", "101")
+    _assert_safe(issue)
+    assert "x" * 10 not in issue.message  # имена тарифов — только в value
+    assert issue.value is not None
+    assert issue.value.startswith("\\x1b[31m")
+
+
+def test_parse_snapshot_unknown_key_with_escape_is_sanitized_in_column() -> None:
+    issue = _single_issue(_data(_item("101", **{ESC + "]0;title" + "k" * 500: "x"})))
+    assert issue.code is IssueCode.UNKNOWN_COLUMN
+    _assert_safe(issue)
+    assert issue.column is not None
+    assert issue.column.startswith("\\x1b]0;title")
+
+
+def test_all_issue_dicts_are_safe_for_malicious_snapshot() -> None:
+    evil = ESC + "[2J" + chr(0x202E) + "z" * 5000
+    data = _data(
+        _item(evil, name=evil, prices={evil: evil}, currency=evil, station=evil, sort_key=evil, **{evil: 1}),
+        _item("ok", category_external_id=evil),
+        categories=[{"external_id": evil, "name": evil, "sort_key": evil}],
+    )
+    _, issues = parse_snapshot(data, "AZN")
+    assert issues
+    for issue in issues:
+        _assert_safe(issue)
+
+
+@pytest.mark.parametrize(
+    "code_point",
+    [0x1B, 0x85, 0x9F, 0x2028, 0x2029, 0x202A, 0x202E, 0x2066, 0x2069, 0x200B, 0x200C, 0x200D, 0xFEFF, 0xE0001],
+)
+def test_invisible_characters_are_rejected(code_point: int) -> None:
+    issue = _single_issue(_data(_item("101", name=f"Dol{chr(code_point)}ma")))
+    assert (issue.code, issue.column, issue.external_id) == (IssueCode.CONTROL_CHARS, "name", "101")
+    _assert_safe(issue)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Plov ə ğ ş ı ö ü ç Ş İ", "Борщ «домашний» — 300 г", "Pizza 🍕", "Çay & şirniyyat (2 nəfər)"],
+)
+def test_visible_text_is_accepted(name: str) -> None:
+    snapshot, issues = parse_snapshot(_data(_item("101", name=name)), "AZN")
+    assert issues == []
+    assert snapshot is not None
+    assert snapshot.items[0].name == name
+
+
+@pytest.mark.parametrize(
+    ("code_point", "escaped"),
+    [(0x1B, "\\x1b"), (0x85, "\\x85"), (0x202E, "\\u202e"), (0xFEFF, "\\ufeff"), (0xE0001, "\\U000e0001")],
+)
+def test_escape_invisible(code_point: int, escaped: str) -> None:
+    assert escape_invisible(f"a{chr(code_point)}b") == f"a{escaped}b"
+    assert escape_invisible("Ünvan ə") == "Ünvan ə"
+
+
+def test_safe_text_limits_after_escaping() -> None:
+    text = safe_text(ESC * 100, 10)
+    assert len(text) == 10
+    assert text == "\\x1b\\x1b\\…"
+    assert safe_text("short", 10) == "short"

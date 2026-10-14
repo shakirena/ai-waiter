@@ -54,3 +54,16 @@
 **Тесты:** codeception unit (PHP 7.1, codeception 2.5.6): 12 tests, 48 assertions, OK. Старые ContactFormTest и LoginFormTest падают и на origin/master (несовместимость yii2-codeception).
 **Локальная выгрузка:** 362 позиции, 20 категорий, 1 не выгружена (disabled), файл в `local-data/`.
 **Отклонения:** собственная запись CSV вместо fputcsv (escape `\` в PHP 7.1); нормализация управляющих символов (в реальном названии была табуляция); AC-7 в spec исправлен — `is_available` не выгружается, `disabled = 1` в файл не попадает.
+
+---
+
+## 🔒 Security Review
+
+- Verdict: PASS (метка security:passed), 2026-10-14
+- Scope: касса restoran, ветка feature/67-ai-export-menu, 8598378 (delta от fb7f374): components/MenuSnapshotBuilder.php, commands/AiExportMenuController.php, tests/codeception/unit/components/MenuSnapshotBuilderTest.php, tests/codeception/unit/_bootstrap.php
+- Findings: CRITICAL 0, HIGH 0, MEDIUM 0, LOW 1, INFO 2
+- LOW: CSV-инъекция формулами (= + - @) при открытии файла в Excel — не экранировать (испортит названия), предупредить в инструкции к выгрузке (README ai-waiter).
+- INFO: текст yii\db\Exception в stderr может содержать пользователя и хост БД (без пароля); в ai-sync (#9) наружу передавать только SQLSTATE.
+- INFO: предсказуемое имя <файл>.tmp — безвредно, по желанию tempnam().
+- Заметки: SQL статический, только SELECT; невалидный UTF-8 отвергается, управляющие и Cf-символы заменяются (AI-3); CSV по RFC 4180; секретов в коммите нет; unit-тесты 12/12 OK.
+- Комментарий: https://github.com/shakirena/ai-waiter/issues/67#issuecomment-6165448425

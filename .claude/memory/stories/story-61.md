@@ -34,3 +34,27 @@
 **Тесты:** `tests/test_money.py`, `tests/test_menu_snapshot.py` (unit, Windows и Linux); граница: `app.menu_sync` не импортирует `fastapi`/`app.api`
 **Зависимости:** #7; новых пакетов нет
 **Arch doc:** docs/arch/feature-8-menu-import.md (раздел «Истории — файлы, тесты, порядок»)
+
+---
+
+## 💻 Разработка (developer)
+
+**Branch:** feature/8-menu-import (общий worktree группы #8)
+**Новые файлы:**
+- backend/tests/test_money.py
+- backend/tests/test_menu_snapshot.py
+
+**Изменённые файлы:**
+- backend/app/schemas/money.py — `parse_money`, `format_money`, `MoneyError(ValueError)` с `reason: MoneyErrorReason` (`invalid`/`float`/`too_many_decimals`/`negative`/`too_large`)
+- backend/app/menu_sync/report.py — `SyncIssue.to_dict`, обрезка/экранирование `value` (`issue_value`, `__post_init__`), `has_errors`, `limit_issues`, `MenuSyncReport.has_errors/counts_dict/to_dict`
+- backend/app/menu_sync/snapshot.py — валидаторы `SnapshotItem`, `issues_from_validation_error`, `check_snapshot`, `parse_snapshot`, `resolve_currency` (`snapshot_hash` — заглушка для #63)
+- backend/tests/test_import_boundaries.py — `app.menu_sync`/`app.schemas` без `fastapi`/`app.api`; `app.core` без `app.menu_sync`
+
+**Решения:**
+- Проверка тарифов — `field_validator("prices")` с `PydanticCustomError` (`missing_default_price`, `invalid_price_tier`), а не `model_validator`: ошибка получает поле `prices.default`/`prices`. Пустая `station` → `None` — отдельный `field_validator`.
+- `parse_snapshot` при ошибках формы всё равно выполняет межэлементные проверки над элементами без ошибок (`_check_valid_elements`), поэтому AC «три ошибки сразу» выполняется. Ссылка на категорию с ошибкой формы не даёт `unknown_category`; если все позиции невалидны, нет `empty_snapshot`. При неверной структуре или превышении лимитов межэлементные проверки пропускаются.
+- Ошибки категорий помечаются префиксом «категория: » в сообщении (`external_id` категорий и позиций — разные пространства имён); `row` у снимка — `None` (номер строки подставляет `files`, #64).
+- `MoneyError.reason` — для #64: `IssueCode` выбирается по причине, без разбора текста.
+- `Decimal("8.500")` принимается (то же значение, без округления); строка `"8.505"` и `Decimal("8.505")` — `too_many_decimals`; `bool` отвергается.
+
+**Build:** ruff check / format OK · pytest 1171 passed, 3 skipped (с db) · покрытие money.py, report.py — 100 %, snapshot.py — 99 % (не покрыта только заглушка `snapshot_hash`)

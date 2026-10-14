@@ -59,3 +59,50 @@ def test_restricted_imports_only_in_implementation_packages(module: str) -> None
         and not (rel := path.relative_to(APP_DIR).as_posix()).startswith(allowed)
     ]
     assert offenders == [], f"{module} imported outside {allowed}: {offenders}"
+
+
+# ---------------------------------------------------------------- app.menu_sync (#61, ADR-8.1)
+
+
+def _imported_modules(path: Path) -> set[str]:
+    """Полные имена импортируемых модулей; ``from app import api`` даёт и ``app``, и ``app.api``."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            found.add(node.module)
+            found.update(f"{node.module}.{alias.name}" for alias in node.names)
+    return found
+
+
+def _imports_any(path: Path, prefixes: tuple[str, ...]) -> bool:
+    return any(name == p or name.startswith(f"{p}.") for name in _imported_modules(path) for p in prefixes)
+
+
+def test_full_name_scanner(tmp_path: Path) -> None:
+    sample = tmp_path / "sample.py"
+    sample.write_text("import fastapi.routing\nfrom app import api\nfrom app.apis import x\n", encoding="utf-8")
+    assert _imports_any(sample, ("fastapi",))
+    assert _imports_any(sample, ("app.api",))
+    other = tmp_path / "other.py"
+    other.write_text("from app.apis import x\nimport fastapix\n", encoding="utf-8")
+    assert not _imports_any(other, ("fastapi", "app.api"))
+
+
+def test_menu_sync_does_not_import_fastapi_or_api() -> None:
+    """Роутеры (#16, админка) вызывают ``app.menu_sync``, а не наоборот; деньги API — ``app.schemas``."""
+    files = [*(APP_DIR / "menu_sync").rglob("*.py"), *(APP_DIR / "schemas").rglob("*.py")]
+    assert any(path.name == "snapshot.py" for path in files)
+    offenders = [path.relative_to(APP_DIR).as_posix() for path in files if _imports_any(path, ("fastapi", "app.api"))]
+    assert offenders == []
+
+
+def test_core_does_not_import_menu_sync() -> None:
+    offenders = [
+        path.relative_to(APP_DIR).as_posix()
+        for path in (APP_DIR / "core").rglob("*.py")
+        if _imports_any(path, ("app.menu_sync",))
+    ]
+    assert offenders == []

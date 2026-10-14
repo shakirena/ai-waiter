@@ -24,7 +24,13 @@ from app.menu_sync.files import (
     parse_menu_bytes,
     read_menu_file,
 )
-from app.menu_sync.files.csv_reader import detect_delimiter, read_csv_table
+from app.menu_sync.files.csv_reader import (
+    HEADER_SEARCH_RECORDS,
+    MAX_BLANK_RECORDS,
+    MAX_LINE_CHARS,
+    detect_delimiter,
+    read_csv_table,
+)
 from app.menu_sync.files.format import (
     MAX_CELL_CHARS,
     MAX_COLUMNS,
@@ -726,9 +732,9 @@ def test_read_menu_file_exactly_at_limit_is_read(tmp_path: Path) -> None:
     path = tmp_path / "menu.csv"
     body = csv_bytes(HEADER, "1,A,1,x,1")
     padding = MAX_FILE_BYTES - len(body)
-    blank_line = b" " * 999 + b"\n"  # строки из пробелов пропускаются
+    blank_line = b" " * 99_999 + b"\n"  # пустые строки (в пределах MAX_LINE_CHARS и MAX_BLANK_RECORDS)
     lines, rest = divmod(padding, len(blank_line))
-    path.write_bytes(body + blank_line * lines + b"\n" * rest)
+    path.write_bytes(body + blank_line * lines + b" " * rest)
     assert path.stat().st_size == MAX_FILE_BYTES
     result = read_menu_file(path)
     assert result.snapshot is not None
@@ -796,3 +802,62 @@ def test_locate_issues_adds_rows_by_external_id() -> None:
         (9, "price_default"),
     ]
     assert located[1].severity is Severity.WARNING
+
+
+# ---------------------------------------------------------------- security review #64: пустые и длинные строки
+
+
+def test_file_of_newlines_rejected_without_reading_it_all() -> None:
+    """LOW-1: 5 МБ переводов строк — «нет заголовка» после первых HEADER_SEARCH_RECORDS записей."""
+    issue = only_issue(parse_menu_bytes(b"\n" * MAX_FILE_BYTES, "menu.csv"))
+    assert issue.code is IssueCode.EMPTY_SNAPSHOT
+    assert f"первых {HEADER_SEARCH_RECORDS}" in issue.message
+
+
+def test_blank_records_after_header_are_limited() -> None:
+    """LOW-1: пустые записи после заголовка считаются, сверх MAX_BLANK_RECORDS — too_many_rows."""
+    ok = csv_bytes(HEADER, "1,A,1,x,1") + b"\n" * MAX_BLANK_RECORDS
+    assert parse_menu_bytes(ok, "menu.csv").snapshot is not None
+    issue = only_issue(parse_menu_bytes(ok + b"\n" * (MAX_FILE_BYTES - len(ok)), "menu.csv"))
+    assert issue.code is IssueCode.TOO_MANY_ROWS
+    assert issue.row == 3 + MAX_BLANK_RECORDS
+    assert "пустых" in issue.message
+
+
+def test_header_searched_only_in_first_records() -> None:
+    at_limit = parse("\r\n" * (HEADER_SEARCH_RECORDS - 1) + HEADER, "1,A,1,x,1")
+    assert at_limit.snapshot is not None
+    assert at_limit.item_rows == {"1": HEADER_SEARCH_RECORDS + 1}
+    too_far = parse("\r\n" * HEADER_SEARCH_RECORDS + HEADER, "1,A,1,x,1")
+    assert codes(too_far) == [IssueCode.EMPTY_SNAPSHOT]
+
+
+@pytest.mark.parametrize("line_number", [1, 2])
+def test_overlong_physical_line_rejected_before_csv(line_number: int) -> None:
+    """LOW-2: строка из множества коротких полей отвергается до построения записи csv."""
+    long_line = "ab," * (MAX_LINE_CHARS // 3 + 1)
+    lines = [long_line, "1,A,1,x,1"] if line_number == 1 else [HEADER, long_line]
+    issue = only_issue(parse(*lines))
+    assert (issue.code, issue.row) == (IssueCode.TOO_LONG, line_number)
+    assert detect_delimiter(long_line) == ","
+
+
+def test_longest_legitimate_cell_is_not_cut_by_line_limit() -> None:
+    """Ячейка на MAX_CELL_CHARS символов из одних кавычек (в файле — вдвое длиннее) доходит до модели."""
+    quoted = '"' + '""' * MAX_CELL_CHARS + '"'
+    issue = only_issue(parse(HEADER, f"1,A,1,{quoted},1"))
+    assert (issue.code, issue.column) == (IssueCode.TOO_LONG, "name")
+    assert issue.message == "длиннее 200 символов"
+
+
+def test_file_of_delimiters_only_has_no_header() -> None:
+    """INFO: строки «,,,,» и «;;;;» пусты при любом разделителе — «нет заголовка», а не too_many_rows."""
+    assert detect_delimiter(",,,,\n;;;;\n") == ","
+    issue = only_issue(parse_menu_bytes(b",,,,\n" * 200 + b";;;;\n", "menu.csv"))
+    assert issue.code is IssueCode.EMPTY_SNAPSHOT
+
+
+def test_delimiter_only_rows_between_data_are_skipped() -> None:
+    result = parse(HEADER, "1,A,1,x,1", ";;;;", ",,,,", " , ; ", "1,A,2,y,1")
+    assert result.snapshot is not None
+    assert result.item_rows == {"1": 2, "2": 6}

@@ -80,13 +80,15 @@ MAX_NON_SHEET_TAGS: Final[int] = 200_000
 # Пустые строки листа (в том числе досозданные openpyxl для пропусков номеров) — как в CSV.
 MAX_BLANK_ROWS: Final[int] = MAX_DATA_ROWS
 MAX_SHEET_ROWS: Final[int] = MAX_DATA_ROWS + MAX_BLANK_ROWS
-# XML-элементы выбранного листа: ячейки (5000 строк по 30 колонок), прочие и всего.
-MAX_SHEET_CELLS: Final[int] = MAX_DATA_ROWS * 30
+# XML-элементы выбранного листа: ячейки (5000 строк по MAX_COLUMNS = 50 колонок), прочие и всего.
+MAX_SHEET_CELLS: Final[int] = MAX_DATA_ROWS * MAX_COLUMNS
+# Содержимое одной ячейки: значение и формула (v, f) или строка (is, t).
+CELL_CONTENT_PER_CELL: Final[int] = 3
 # Сумма ширин просмотренных строк (с дополнением openpyxl до последней ячейки строки):
-# MAX_SHEET_ROWS строк по 30 колонок или около 18 строк с ячейкой в колонке XFD.
+# MAX_SHEET_ROWS строк по 50 колонок или около 30 строк с ячейкой в колонке XFD.
 MAX_SCANNED_CELLS: Final[int] = 2 * MAX_SHEET_CELLS
 MAX_SHEET_OTHER_TAGS: Final[int] = 20_000
-MAX_SHEET_TAGS: Final[int] = 4 * MAX_SHEET_CELLS + MAX_SHEET_ROWS + MAX_SHEET_OTHER_TAGS
+MAX_SHEET_TAGS: Final[int] = (1 + CELL_CONTENT_PER_CELL) * MAX_SHEET_CELLS + MAX_SHEET_ROWS + MAX_SHEET_OTHER_TAGS
 # Вся книга: лист меню и служебные части; другие большие листы в книгу с меню не кладутся.
 MAX_BOOK_TAGS: Final[int] = MAX_SHEET_TAGS + MAX_NON_SHEET_TAGS
 # Элементы содержимого ячейки (значение, формула, строка с форматированием); остальное — «прочие».
@@ -94,8 +96,11 @@ CELL_CONTENT_TAGS: Final[frozenset[bytes]] = frozenset(
     {b"v", b"f", b"is", b"t", b"r", b"rPr", b"rFont", b"b", b"i", b"u", b"strike", b"sz", b"color"}
     | {b"family", b"scheme", b"vertAlign", b"outline", b"shadow", b"condense", b"extend", b"charset", b"rPh"}
 )
-# Открывающий тег: локальное имя без префикса пространства имён (закрывающие, <?, <! не подходят).
-_START_TAG: Final[re.Pattern[bytes]] = re.compile(rb"<(?:[A-Za-z_][\w.\-]*:)?([A-Za-z_][\w.\-]*)")
+# Любая разметка, кроме закрывающего тега: «<» и сразу имя (пробел между ними XML не допускает).
+# Префикс и имя — любые байты, кроме разделителей (NCName бывает не из ASCII: «<é:row>»); локальное
+# имя — после префикса. «<?…», «<!--…», «<![CDATA[…» и «<» внутри CDATA или комментария считаются
+# с пустым или случайным именем — как «прочие» элементы (запас в безопасную сторону).
+_START_TAG: Final[re.Pattern[bytes]] = re.compile(rb"<(?!/)(?:[^\s/>!?:=<]+:)?([^\s/>!?:=<]*)")
 # Коды ошибок Excel, которые можно показать в отчёте; иное значение ячейки t="e" не выводится.
 EXCEL_ERROR_CODES: Final[frozenset[str]] = frozenset(
     {"#N/A", "#REF!", "#VALUE!", "#DIV/0!", "#NAME?", "#NUM!", "#NULL!", "#SPILL!", "#CALC!", "#GETTING_DATA"}
@@ -122,7 +127,9 @@ def _archive_issue(code: IssueCode, message: str) -> list[SyncIssue]:
 def _count_tags(xml: bytes, limit: int) -> Counter[bytes] | None:
     """Число открывающих тегов по локальному имени; ``None`` — тегов больше ``limit`` (счёт прерван)."""
     counts: Counter[bytes] = Counter()
-    for total, match in enumerate(_START_TAG.finditer(xml), start=1):
+    # Expat читает только ASCII-совместимые кодировки и UTF-16. В UTF-16 разметка — те же байты
+    # ASCII через нулевой: без нулей теги видны так же, как в UTF-8 (в UTF-8 нулей в XML нет).
+    for total, match in enumerate(_START_TAG.finditer(xml.replace(b"\x00", b"")), start=1):
         if total > limit:
             return None
         counts[match.group(1)] += 1
@@ -255,7 +262,11 @@ def _check_sheet_xml(xml: bytes) -> tuple[list[SyncIssue], bool]:
     if counts[b"c"] > MAX_SHEET_CELLS:
         message = f"на листе больше {MAX_SHEET_CELLS} ячеек вместе с пустыми отформатированными"
         return [SyncIssue(IssueCode.TOO_MANY_COLUMNS, message)], False
-    other = counts.total() - sum(counts[name] for name in (b"row", b"c", *CELL_CONTENT_TAGS))
+    # openpyxl разбирает как ячейку любой дочерний элемент row: содержимое ячеек сверх
+    # CELL_CONTENT_PER_CELL на элемент c считается «прочими» элементами.
+    content = sum(counts[name] for name in CELL_CONTENT_TAGS)
+    excess = max(0, content - CELL_CONTENT_PER_CELL * counts[b"c"])
+    other = counts.total() - counts[b"row"] - counts[b"c"] - content + excess
     if other > MAX_SHEET_OTHER_TAGS:
         message = (
             f"на листе больше {MAX_SHEET_OTHER_TAGS} служебных элементов "

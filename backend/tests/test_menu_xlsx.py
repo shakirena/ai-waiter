@@ -499,7 +499,7 @@ def test_many_rows_with_formatted_cell_in_xfd_stop_at_cell_budget() -> None:
     result, elapsed = timed_parse(add_rows(menu_book(["10", "A", "1", "Dolma", 8]), rows))
     issue = only_issue(result)
     assert issue.code is IssueCode.TOO_MANY_COLUMNS
-    assert issue.row is not None and issue.row < 30  # примерно MAX_SCANNED_CELLS / 16 384
+    assert issue.row is not None and issue.row < 40  # примерно MAX_SCANNED_CELLS / 16 384
     assert "широкий" in issue.message
     assert elapsed < 5
 
@@ -551,9 +551,78 @@ def test_many_merged_cells_rejected_before_parsing() -> None:
 
 def test_count_tags_ignores_closing_and_prefixes() -> None:
     counts = xlsx_reader._count_tags(b'<?xml version="1.0"?><x:row r="1"><c/><!-- <c --></x:row>', 10)
-    assert counts == {b"row": 1, b"c": 2}  # тег в комментарии тоже считается: запас в безопасную сторону
+    # «<?xml» и «<!--» — с пустым именем, тег в комментарии тоже считается: запас в безопасную сторону
+    assert counts == {b"": 2, b"row": 1, b"c": 2}
+    prefixed = "<é:row><ü-1.x:c/><é:v/></é:row>".encode()
+    assert xlsx_reader._count_tags(prefixed, 10) == {b"row": 1, b"c": 1, b"v": 1}
+    utf16 = '<?xml version="1.0" encoding="UTF-16"?><é:row><c/></é:row>'.encode("utf-16")
+    assert xlsx_reader._count_tags(utf16, 10) == {b"": 1, b"row": 1, b"c": 1}
     assert xlsx_reader._count_tags(b"<a><b/><c/></a>", 2) is None
     assert xlsx_reader._count_tags(b"<a><b/></a>", 2) == {b"a": 1, b"b": 1}
+
+
+SHEET_NS = 'xmlns:é="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+
+
+def test_non_ascii_prefix_with_repeated_rows_rejected_before_parsing() -> None:
+    """Security review #65, цикл 2 [HIGH]: префикс не из ASCII не прячет элементы от подсчёта."""
+    count = xlsx_reader.MAX_SHEET_ROWS + 1
+    rows = "".join(f'<é:row {SHEET_NS} r="2" spans="{n}:{n}"><é:c r="XFD2" s="0"/></é:row>' for n in range(count))
+    result, elapsed = timed_parse(add_rows(menu_book(["10", "A", "1", "Dolma", 8]), rows.encode()))
+    assert codes(result) == [IssueCode.TOO_MANY_ROWS]
+    assert elapsed < 5
+
+
+def test_non_ascii_prefix_with_many_cells_in_one_row_rejected_before_parsing() -> None:
+    count = xlsx_reader.MAX_SHEET_CELLS + 1
+    cells = "".join(f'<é:c r="A3"><é:v>{n}</é:v></é:c>' for n in range(count))
+    row = f'<é:row {SHEET_NS} r="3">{cells}</é:row>'.encode()
+    result, elapsed = timed_parse(add_rows(menu_book(["10", "A", "1", "Dolma", 8]), row))
+    assert codes(result) == [IssueCode.TOO_MANY_COLUMNS]
+    assert elapsed < 5
+
+
+def test_cell_content_without_cells_counts_as_other(monkeypatch: pytest.MonkeyPatch) -> None:
+    """openpyxl разбирает как ячейку любой дочерний элемент row, поэтому лишние v, t и т. п. — «прочие»."""
+    row = b'<row r="3">' + b"<v>1</v>" * 100 + b"</row>"
+    data = add_rows(menu_book(["10", "A", "1", "Dolma", 8]), row)
+    monkeypatch.setattr(xlsx_reader, "MAX_SHEET_OTHER_TAGS", 50)
+    issue = only_issue(parse(data))
+    assert (issue.code, "служебных элементов" in issue.message) == (IssueCode.UNSAFE_ARCHIVE, True)
+
+
+def utf16_sheet(data: bytes, rows_xml: str = "") -> bytes:
+    def transform(name: str, content: bytes) -> bytes:
+        if name != "xl/worksheets/sheet1.xml":
+            return content
+        text = content.decode("utf-8").replace("</sheetData>", rows_xml + "</sheetData>")
+        if text.startswith("<?xml"):
+            text = text.split("?>", 1)[1]
+        return ('<?xml version="1.0" encoding="UTF-16"?>' + text).encode("utf-16")
+
+    return rewrite(data, transform)
+
+
+def test_utf16_sheet_is_counted_and_parsed() -> None:
+    assert item_ids(parse(utf16_sheet(menu_book(["10", "A", "1", "Dolma", 8])))) == ["1"]
+    rows = "".join(
+        f'<row r="2" spans="{n}:{n}"><c r="XFD2" s="0"/></row>' for n in range(xlsx_reader.MAX_SHEET_ROWS + 1)
+    )
+    result, elapsed = timed_parse(utf16_sheet(menu_book(["10", "A", "1", "Dolma", 8]), rows))
+    assert codes(result) == [IssueCode.TOO_MANY_ROWS]
+    assert elapsed < 5
+
+
+def test_read_only_worksheet_has_worksheet_path() -> None:
+    """xlsx_reader читает XML листа по ``ReadOnlyWorksheet._worksheet_path`` (openpyxl закреплён <3.2)."""
+    workbook = openpyxl.load_workbook(io.BytesIO(two_sheets()), read_only=True)
+    try:
+        assert [ws._worksheet_path for ws in workbook.worksheets] == [
+            "xl/worksheets/sheet1.xml",
+            "xl/worksheets/sheet2.xml",
+        ]
+    finally:
+        workbook.close()
 
 
 def test_sheet_path_unknown_is_unreadable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -739,7 +808,7 @@ def test_book_budget_smaller_than_non_sheet_budget_reports_book(monkeypatch: pyt
 
 def test_sheet_and_tag_limits() -> None:
     assert xlsx_reader.MAX_NON_SHEET_BYTES == 20 * 1024 * 1024
-    assert xlsx_reader.MAX_SHEET_CELLS == 30 * xlsx_reader.MAX_DATA_ROWS
+    assert xlsx_reader.MAX_SHEET_CELLS == MAX_COLUMNS * xlsx_reader.MAX_DATA_ROWS
     assert xlsx_reader.MAX_BOOK_TAGS == xlsx_reader.MAX_SHEET_TAGS + xlsx_reader.MAX_NON_SHEET_TAGS
 
 

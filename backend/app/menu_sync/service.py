@@ -34,12 +34,14 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import PureWindowsPath
 from typing import TYPE_CHECKING, Any, Final
 
-from sqlalchemy import delete, false, func, insert, select, text, tuple_, update
+from sqlalchemy import Text, Uuid, bindparam, delete, false, func, insert, select, text, update
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.db.ids import new_id
@@ -59,6 +61,10 @@ if TYPE_CHECKING:
 MENU_SYNC_LOCK_NAMESPACE: Final[int] = 8
 # source_ref хранится без пути: только имя файла или «тип/версия» коннектора.
 SOURCE_REF_MAX: Final[int] = 255
+# Строк (или id, пар id+тариф) в одном операторе записи плана. Лимит asyncpg — 32 767 параметров на
+# оператор; без пакетов снимок MAX_ITEMS × MAX_TIERS_PER_ITEM его превышает (security review #62).
+# Самая широкая строка — позиция (≈ 11 параметров): 1000 × 11 с запасом укладывается в лимит.
+WRITE_BATCH_ROWS: Final[int] = 1000
 
 
 class MenuSyncError(RuntimeError):
@@ -259,18 +265,19 @@ async def _write_plan(session: AsyncSession, tenant_id: uuid.UUID, plan: MenuSyn
     items = MenuItem.__table__
     prices = MenuItemPrice.__table__
 
-    if plan.category_writes:
-        stmt = pg_insert(categories)
+    category_stmt = pg_insert(categories)
+    category_stmt = category_stmt.on_conflict_do_update(
+        index_elements=[categories.c.tenant_id, categories.c.external_id],
+        set_={
+            "pos_name": category_stmt.excluded.pos_name,
+            "sort_key": category_stmt.excluded.sort_key,
+            "is_hidden": false(),
+            "updated_at": func.now(),
+        },
+    )
+    for chunk in _chunks(plan.category_writes):
         await session.execute(
-            stmt.on_conflict_do_update(
-                index_elements=[categories.c.tenant_id, categories.c.external_id],
-                set_={
-                    "pos_name": stmt.excluded.pos_name,
-                    "sort_key": stmt.excluded.sort_key,
-                    "is_hidden": false(),
-                    "updated_at": func.now(),
-                },
-            ),
+            category_stmt,
             [
                 {
                     "id": write.id,
@@ -280,21 +287,32 @@ async def _write_plan(session: AsyncSession, tenant_id: uuid.UUID, plan: MenuSyn
                     "sort_key": write.sort_key,
                     "is_hidden": False,
                 }
-                for write in plan.category_writes
+                for write in chunk
             ],
         )
 
     # is_available=None — колонку не трогать: такие позиции пишутся отдельным пакетом без неё.
     for with_availability in (True, False):
         batch = [write for write in plan.item_writes if (write.is_available is not None) == with_availability]
-        if batch:
-            await _upsert_items(session, items, tenant_id, batch, with_availability=with_availability)
+        for chunk in _chunks(batch):
+            await _upsert_items(session, items, tenant_id, chunk, with_availability=with_availability)
 
     if plan.delete_prices:
+        # Пары (позиция, тариф) — два массива и unnest: 3 параметра на любой объём (без IN по кортежам,
+        # который упирался в лимит параметров asyncpg и глубину выражения PostgreSQL).
+        pairs = (
+            func.unnest(
+                bindparam("delete_item_ids", [item_id for item_id, _ in plan.delete_prices], type_=ARRAY(Uuid)),
+                bindparam("delete_tiers", [tier for _, tier in plan.delete_prices], type_=ARRAY(Text)),
+            )
+            .table_valued("menu_item_id", "price_tier")
+            .render_derived(name="deleted_prices")
+        )
         await session.execute(
             delete(prices).where(
                 prices.c.tenant_id == tenant_id,
-                tuple_(prices.c.menu_item_id, prices.c.price_tier).in_(plan.delete_prices),
+                prices.c.menu_item_id == pairs.c.menu_item_id,
+                prices.c.price_tier == pairs.c.price_tier,
             )
         )
     price_rows = [
@@ -302,31 +320,39 @@ async def _write_plan(session: AsyncSession, tenant_id: uuid.UUID, plan: MenuSyn
         for write in plan.item_writes
         for tier, price in sorted(write.prices.items())
     ]
-    if price_rows:
-        stmt = pg_insert(prices)
-        await session.execute(
-            stmt.on_conflict_do_update(
-                index_elements=[prices.c.menu_item_id, prices.c.price_tier],
-                set_={"price": stmt.excluded.price, "updated_at": func.now()},
-                where=prices.c.price.is_distinct_from(stmt.excluded.price),
-            ),
-            price_rows,
-        )
+    # Конфликт — по PK (menu_item_id, price_tier) без tenant_id. Это безопасно: menu_item_id берутся
+    # только из позиций этого заведения (план строится по load_current_menu с фильтром tenant_id или
+    # создаёт новые id), а составной FK (tenant_id, menu_item_id) → menu_items не даст сослаться на
+    # позицию другого заведения.
+    price_stmt = pg_insert(prices)
+    price_stmt = price_stmt.on_conflict_do_update(
+        index_elements=[prices.c.menu_item_id, prices.c.price_tier],
+        set_={"price": price_stmt.excluded.price, "updated_at": func.now()},
+        where=prices.c.price.is_distinct_from(price_stmt.excluded.price),
+    )
+    for chunk in _chunks(price_rows):
+        await session.execute(price_stmt, chunk)
 
     for table, hide_ids in ((categories, plan.hide_category_ids), (items, plan.hide_item_ids)):
-        if hide_ids:
+        for chunk in _chunks(hide_ids):
             await session.execute(
                 update(table)
-                .where(table.c.tenant_id == tenant_id, table.c.id.in_(hide_ids))
+                .where(table.c.tenant_id == tenant_id, table.c.id.in_(chunk))
                 .values(is_hidden=True, updated_at=func.now())
             )
-    # В применяемом снимке всегда есть позиции и их категории (пустой отвергнут check_snapshot).
     for table, present_ids in ((categories, plan.present_category_ids), (items, plan.present_item_ids)):
-        await session.execute(
-            update(table)
-            .where(table.c.tenant_id == tenant_id, table.c.id.in_(present_ids))
-            .values(synced_at=func.now(), updated_at=table.c.updated_at)
-        )
+        for chunk in _chunks(present_ids):
+            await session.execute(
+                update(table)
+                .where(table.c.tenant_id == tenant_id, table.c.id.in_(chunk))
+                .values(synced_at=func.now(), updated_at=table.c.updated_at)
+            )
+
+
+def _chunks[T](values: Sequence[T], size: int = WRITE_BATCH_ROWS) -> Iterator[Sequence[T]]:
+    """Последовательные срезы по ``size`` элементов (пустой список — ни одного среза)."""
+    for start in range(0, len(values), size):
+        yield values[start : start + size]
 
 
 async def _upsert_items(

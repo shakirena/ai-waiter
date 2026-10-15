@@ -87,3 +87,9 @@
 - `openpyxl>=3.1,<3.2` (`uv.lock`); тест, что у `ReadOnlyWorksheet` есть `_worksheet_path`.
 - `MAX_SHEET_CELLS` = 5000 × `MAX_COLUMNS` (250 000), как в CSV. Худший допустимый лист 4999 × 50: без формул 5,2 с, с формулой 9,4 с.
 - Замеры атак: 1 млн `<é:c>` в одной строке — 0,86 с (`unsafe_archive`); лист UTF-16 с 400 тыс. повторных `r` — 1,7 с (`too_many_rows`); `<é:row>` с повторным `r` и 1 млн `<v/>` без `c` отвергаются проверкой сжатия или подсчётом.
+
+**Цикл 3 (5c05af5):** PASS (security:passed) — https://github.com/shakirena/ai-waiter/issues/65#issuecomment-6190984268
+**Findings:** CRITICAL 0, HIGH 0, MEDIUM 0, LOW 1, INFO 3
+- Закрыто: HIGH цикла 2 — подсчёт тегов не обходится префиксом не из ASCII; UTF-16 считается после удаления нулевых байт; EBCDIC и многобайтовые кодировки парсер отвергает; ошибочно классифицированные элементы — в «прочие».
+- LOW: худший допустимый лист ~10–12 с CPU (ограничено). Для #27: разбор вне event loop + RateLimiter.
+- INFO: openpyxl>=3.1,<3.2 + тест _worksheet_path; MAX_SHEET_CELLS = 5000×50 как в CSV; CVE в зависимостях нет.

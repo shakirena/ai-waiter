@@ -12,6 +12,7 @@ from __future__ import annotations
 import csv
 import io
 import math
+import time
 import zipfile
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
@@ -292,6 +293,29 @@ def test_excel_error_message_names_error() -> None:
     assert "#N/A" in issue.message
 
 
+def with_error_value(data: bytes, old: str, new: str) -> bytes:
+    def transform(name: str, content: bytes) -> bytes:
+        if not name.startswith("xl/worksheets/"):
+            return content
+        return content.replace(f"<v>{old}</v>".encode(), f"<v>{new}</v>".encode())
+
+    return rewrite(data, transform)
+
+
+def test_unknown_excel_error_value_is_not_shown() -> None:
+    """Security review #65 [LOW]: значение ячейки t="e" из файла показывается только из белого списка."""
+    data = with_error_value(menu_book(["10", "A", "1", "#N/A", 8]), "#N/A", "#" + "X" * 500)
+    issue = only_issue(parse(data))
+    assert (issue.code, issue.column) == (IssueCode.INVALID_CELL_TYPE, "name")
+    assert issue.message == "ошибка Excel вместо значения"
+
+
+@pytest.mark.parametrize("code", sorted(xlsx_reader.EXCEL_ERROR_CODES))
+def test_known_excel_errors_are_shown(code: str) -> None:
+    data = with_error_value(menu_book(["10", "A", "1", "#N/A", 8]), "#N/A", code)
+    assert only_issue(parse(data)).message == f"ошибка Excel {code} вместо значения"
+
+
 def test_date_in_external_id_is_invalid_id() -> None:
     moment = datetime(2024, 1, 2)  # noqa: DTZ001 — в Excel нет часовых поясов
     issue = only_issue(parse(menu_book(["10", "A", moment, "Dolma", 8])))
@@ -421,6 +445,138 @@ def test_too_many_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     assert item_ids(parse(menu_book(*rows[:2]))) == ["0", "1"]
 
 
+def add_rows(data: bytes, rows_xml: bytes) -> bytes:
+    """Дописать в конец ``sheetData`` первого листа готовые элементы ``<row>``."""
+
+    def transform(name: str, content: bytes) -> bytes:
+        if name != "xl/worksheets/sheet1.xml":
+            return content
+        return content.replace(b"</sheetData>", rows_xml + b"</sheetData>")
+
+    return rewrite(data, transform)
+
+
+def timed_parse(data: bytes) -> tuple[ParsedMenuFile, float]:
+    started = time.perf_counter()
+    result = parse(data)
+    return result, time.perf_counter() - started
+
+
+@pytest.mark.parametrize("number", [10**7, 10**12])
+def test_huge_row_number_stops_quickly(number: int) -> None:
+    """Security review #65 [HIGH]: openpyxl досоздаёт пустые строки до номера ``r``."""
+    row = f'<row r="{number}"><c r="A{number}" t="inlineStr"><is><t>x</t></is></c></row>'.encode()
+    data = add_rows(menu_book(["10", "A", "1", "Dolma", 8]), row)
+    assert len(data) < 10 * 1024
+    result, elapsed = timed_parse(data)
+    issue = only_issue(result)
+    assert (issue.code, issue.row) == (IssueCode.TOO_MANY_ROWS, xlsx_reader.MAX_SHEET_ROWS + 1)
+    assert elapsed < 5  # с запасом: на деле доли секунды, до исправления — десятки секунд и больше
+
+
+def test_many_blank_formatted_rows_stop_before_parsing() -> None:
+    """Строки сверх ``MAX_SHEET_ROWS`` отсекаются подсчётом элементов ``row`` до openpyxl."""
+    last = xlsx_reader.MAX_SHEET_ROWS + 500
+    rows = b"".join(f'<row r="{n}"><c r="B{n}" s="0" /></row>'.encode() for n in range(3, last))
+    result, elapsed = timed_parse(add_rows(menu_book(["10", "A", "1", "Dolma", 8]), rows))
+    issue = only_issue(result)
+    assert issue.code is IssueCode.TOO_MANY_ROWS
+    assert str(xlsx_reader.MAX_SHEET_ROWS) in issue.message
+    assert elapsed < 5
+
+
+def test_rows_with_repeated_number_are_counted_before_parsing() -> None:
+    """openpyxl разбирает, но не отдаёт строки с повторным ``r``: обход их не видит, подсчёт — видит."""
+    count = xlsx_reader.MAX_SHEET_ROWS + 1
+    rows = b"".join(f'<row r="2" spans="{n}:{n}"><c r="XFD2" s="0" /></row>'.encode() for n in range(count))
+    result, elapsed = timed_parse(add_rows(menu_book(["10", "A", "1", "Dolma", 8]), rows))
+    assert codes(result) == [IssueCode.TOO_MANY_ROWS]
+    assert elapsed < 5
+
+
+def test_many_rows_with_formatted_cell_in_xfd_stop_at_cell_budget() -> None:
+    rows = b"".join(f'<row r="{n}"><c r="XFD{n}" s="0" /></row>'.encode() for n in range(3, 5000))
+    result, elapsed = timed_parse(add_rows(menu_book(["10", "A", "1", "Dolma", 8]), rows))
+    issue = only_issue(result)
+    assert issue.code is IssueCode.TOO_MANY_COLUMNS
+    assert issue.row is not None and issue.row < 30  # примерно MAX_SCANNED_CELLS / 16 384
+    assert "широкий" in issue.message
+    assert elapsed < 5
+
+
+def test_sheet_row_limit_is_inclusive(monkeypatch: pytest.MonkeyPatch) -> None:
+    # три элемента row: заголовок, строки 2 и 5 листа (3 и 4 — пропуск номеров)
+    row = ["10", "A", "2", "Kabab", 9]
+    cells = {f"{letter}5": value for letter, value in zip("ABCDE", row, strict=True)}
+    data = book(("menu", [HEADER, ["10", "A", "1", "Dolma", 8]]), cells={"menu": cells})
+    monkeypatch.setattr(xlsx_reader, "MAX_SHEET_ROWS", 5)
+    assert item_ids(parse(data)) == ["1", "2"]
+    monkeypatch.setattr(xlsx_reader, "MAX_SHEET_ROWS", 4)
+    issue = only_issue(parse(data))
+    assert (issue.code, issue.row) == (IssueCode.TOO_MANY_ROWS, 5)
+    monkeypatch.setattr(xlsx_reader, "MAX_SHEET_ROWS", 2)  # элементов row больше лимита
+    issue = only_issue(parse(data))
+    assert (issue.code, issue.row) == (IssueCode.TOO_MANY_ROWS, None)
+
+
+@pytest.mark.parametrize(
+    ("limit", "value", "code"),
+    [
+        ("MAX_SHEET_CELLS", 9, IssueCode.TOO_MANY_COLUMNS),  # 10 элементов c
+        ("MAX_SHEET_TAGS", 20, IssueCode.TOO_MANY_ROWS),
+        ("MAX_SHEET_OTHER_TAGS", 3, IssueCode.UNSAFE_ARCHIVE),  # worksheet, sheetPr, dimension, …
+    ],
+)
+def test_sheet_xml_limits(monkeypatch: pytest.MonkeyPatch, limit: str, value: int, code: IssueCode) -> None:
+    data = menu_book(["10", "A", "1", "Dolma", 8])
+    monkeypatch.setattr(xlsx_reader, limit, value)
+    assert codes(parse(data)) == [code]
+
+
+def test_many_merged_cells_rejected_before_parsing() -> None:
+    merges = "".join(f'<mergeCell ref="A{n}:B{n}"/>' for n in range(10, 10 + xlsx_reader.MAX_SHEET_OTHER_TAGS))
+    xml = f"<mergeCells>{merges}</mergeCells>".encode()
+
+    def transform(name: str, content: bytes) -> bytes:
+        if name != "xl/worksheets/sheet1.xml":
+            return content
+        return content.replace(b"</sheetData>", b"</sheetData>" + xml)
+
+    result, elapsed = timed_parse(rewrite(menu_book(["10", "A", "1", "Dolma", 8]), transform))
+    issue = only_issue(result)
+    assert issue.code is IssueCode.UNSAFE_ARCHIVE
+    assert "служебных элементов" in issue.message
+    assert elapsed < 5
+
+
+def test_count_tags_ignores_closing_and_prefixes() -> None:
+    counts = xlsx_reader._count_tags(b'<?xml version="1.0"?><x:row r="1"><c/><!-- <c --></x:row>', 10)
+    assert counts == {b"row": 1, b"c": 2}  # тег в комментарии тоже считается: запас в безопасную сторону
+    assert xlsx_reader._count_tags(b"<a><b/><c/></a>", 2) is None
+    assert xlsx_reader._count_tags(b"<a><b/></a>", 2) == {b"a": 1, b"b": 1}
+
+
+def test_sheet_path_unknown_is_unreadable(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert xlsx_reader._sheet_xml(b"", object()) is None
+    monkeypatch.setattr(xlsx_reader, "_sheet_xml", lambda *_: None)
+    issue = only_issue(parse(menu_book(["10", "A", "1", "Dolma", 8])))
+    assert (issue.code, issue.message) == (IssueCode.UNSUPPORTED_FORMAT, UNREADABLE_HINT)
+
+
+def test_scanned_cells_limit_is_inclusive(monkeypatch: pytest.MonkeyPatch) -> None:
+    data = menu_book(["10", "A", "1", "Dolma", 8])  # две строки по 5 ячеек
+    monkeypatch.setattr(xlsx_reader, "MAX_SCANNED_CELLS", 10)
+    assert item_ids(parse(data)) == ["1"]
+    monkeypatch.setattr(xlsx_reader, "MAX_SCANNED_CELLS", 9)
+    issue = only_issue(parse(data))
+    assert (issue.code, issue.row) == (IssueCode.TOO_MANY_COLUMNS, 2)
+
+
+def test_sheet_limits_follow_csv() -> None:
+    assert xlsx_reader.MAX_BLANK_ROWS == xlsx_reader.MAX_DATA_ROWS
+    assert xlsx_reader.MAX_SHEET_ROWS == 2 * xlsx_reader.MAX_DATA_ROWS
+
+
 def test_value_beyond_max_columns() -> None:
     row = ["10", "A", "1", "Dolma", 8, *([None] * (MAX_COLUMNS - 5)), "x"]
     assert len(row) == MAX_COLUMNS + 1
@@ -539,6 +695,54 @@ def test_uncompressed_total_over_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     assert check_xlsx_archive(data) == []
 
 
+def with_part(name: str, content: bytes) -> bytes:
+    return rewrite(menu_book(["10", "A", "1", "Dolma", 8]), lambda _, original: original, {name: content})
+
+
+def test_non_sheet_parts_over_byte_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Security review #65 [LOW]: общие строки и стили читают обе книги; имя части может быть любым."""
+    data = with_part("xl/strings-renamed.xml", b"<sst/>" * 20)
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        size = sum(m.file_size for m in archive.infolist() if not m.filename.startswith("xl/worksheets/"))
+    monkeypatch.setattr(xlsx_reader, "MAX_NON_SHEET_BYTES", size)
+    assert check_xlsx_archive(data) == []
+    monkeypatch.setattr(xlsx_reader, "MAX_NON_SHEET_BYTES", size - 1)
+    issue = only_issue(parse(data))
+    assert issue.code is IssueCode.UNSAFE_ARCHIVE
+    assert "кроме листов" in issue.message
+
+
+def test_non_sheet_parts_over_tag_limit() -> None:
+    items = b"".join(f"<si><t>{n}</t></si>".encode() for n in range(xlsx_reader.MAX_NON_SHEET_TAGS // 2))
+    strings = b"<sst>" + items + b"</sst>"
+    result, elapsed = timed_parse(with_part("xl/sharedStrings.xml", strings))
+    issue = only_issue(result)
+    assert issue.code is IssueCode.UNSAFE_ARCHIVE
+    limit = xlsx_reader.MAX_NON_SHEET_TAGS
+    assert issue.message.startswith(f"служебные части книги (кроме листов) содержит больше {limit}")
+    assert elapsed < 5
+
+
+def test_book_over_tag_limit_counts_other_sheets(monkeypatch: pytest.MonkeyPatch) -> None:
+    data = with_part("xl/worksheets/sheet9.xml", b"<worksheet>" + b"<col/>" * 50 + b"</worksheet>")
+    monkeypatch.setattr(xlsx_reader, "MAX_BOOK_TAGS", 40)
+    issue = only_issue(parse(data))
+    assert issue.code is IssueCode.UNSAFE_ARCHIVE
+    assert issue.message.startswith("книга содержит больше 40 элементов")
+
+
+def test_book_budget_smaller_than_non_sheet_budget_reports_book(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(xlsx_reader, "MAX_BOOK_TAGS", 5)
+    issue = only_issue(parse(menu_book(["10", "A", "1", "Dolma", 8])))
+    assert issue.message.startswith("книга содержит больше 5 элементов")
+
+
+def test_sheet_and_tag_limits() -> None:
+    assert xlsx_reader.MAX_NON_SHEET_BYTES == 20 * 1024 * 1024
+    assert xlsx_reader.MAX_SHEET_CELLS == 30 * xlsx_reader.MAX_DATA_ROWS
+    assert xlsx_reader.MAX_BOOK_TAGS == xlsx_reader.MAX_SHEET_TAGS + xlsx_reader.MAX_NON_SHEET_TAGS
+
+
 def test_real_size_limit_is_50_mb() -> None:
     assert xlsx_reader.MAX_UNCOMPRESSED_BYTES == 50 * 1024 * 1024
     assert MAX_COMPRESSION_RATIO == 100
@@ -603,8 +807,13 @@ def test_workbooks_are_opened_read_only_and_closed(monkeypatch: pytest.MonkeyPat
     tracker = _Tracker()
     monkeypatch.setattr(xlsx_reader, "load_workbook", tracker)
     assert item_ids(parse(menu_book(["10", "A", "1", "Dolma", 8]))) == ["1"]
-    assert [(wb.read_only, wb.data_only) for wb in tracker.books] == [(True, True), (True, False)]
-    assert tracker.closed == 2
+    # Формул на листе нет — вторая книга не открывается.
+    assert [(wb.read_only, wb.data_only) for wb in tracker.books] == [(True, True)]
+    assert tracker.closed == 1
+    data = with_cached_value(menu_book(["10", "A", "1", "Dolma", "=4+4"]), "4+4", "8")
+    assert item_ids(parse(data)) == ["1"]
+    assert [(wb.read_only, wb.data_only) for wb in tracker.books[1:]] == [(True, True), (True, False)]
+    assert tracker.closed == 3
 
 
 def test_workbook_closed_when_sheet_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -622,7 +831,7 @@ def test_workbooks_closed_on_error_while_reading(monkeypatch: pytest.MonkeyPatch
         raise KeyError("broken part")
 
     monkeypatch.setattr(xlsx_reader, "_read_sheet", fail)
-    issue = only_issue(parse(menu_book(["10", "A", "1", "Dolma", 8])))
+    issue = only_issue(parse(menu_book(["10", "A", "1", "Dolma", "=1+1"])))
     assert issue.message == UNREADABLE_HINT
     assert (len(tracker.books), tracker.closed) == (2, 2)
 

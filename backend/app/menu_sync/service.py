@@ -401,15 +401,18 @@ async def record_rejected_run(
     issues: list[SyncIssue],
     snapshot_hash: str | None = None,
     started_at: datetime | None = None,
+    issues_truncated: int = 0,
 ) -> uuid.UUID:
     """Записать ``menu_sync_runs`` со статусом ``rejected`` (проблемы — ``limit_issues``) и вернуть ``id``.
     Не коммитит.
 
     Вызывается в новой транзакции после отката: и для ошибок разбора файла (снимка нет, хеша нет),
     и для ``rejected`` из ``apply_menu_snapshot``. Пробный прогон не журналируется. ``started_at`` —
-    начало синхронизации (по умолчанию — момент записи).
+    начало синхронизации (по умолчанию — момент записи). ``issues_truncated`` — сколько проблем уже
+    отброшено вызывающим (``ParsedMenuFile``/``MenuSyncReport``, #66): прибавляется к своим отброшенным.
     """
     reported, truncated = limit_issues(issues)
+    truncated += max(0, issues_truncated)
     return await _insert_run(
         session,
         tenant_id=tenant_id,

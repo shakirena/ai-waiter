@@ -62,3 +62,18 @@
 - `counts`: `applied` — `counts_dict()`, `unchanged` — нулевые счётчики, `rejected` — `{}`; при > 100 проблем добавляется `issues_truncated`.
 
 **Build:** ruff check / format OK · pytest 1477 passed, 3 skipped (с db; без Redis) · покрытие service.py, snapshot.py, models/menu_sync.py — 100 % · alembic на тестовой базе: upgrade head → downgrade -1 → upgrade head → check OK; `alembic heads` — 0005
+
+---
+
+## 🔒 Security Review
+
+**Verdict:** PASS (security:passed), 2026-10-15
+**Scope:** delta 4a280b5..b5b21c4 — backend/alembic/versions/0005_menu_sync_runs.py, backend/app/models/{__init__,menu_sync}.py, backend/app/menu_sync/{service,snapshot}.py, тесты (test_menu_sync_runs.py, db/test_menu_sync_runs.py, db/test_menu_sync_apply.py, реестры миграций/метаданных)
+**Findings:** CRITICAL 0, HIGH 0, MEDIUM 0, LOW 1, INFO 2
+**Комментарий:** https://github.com/shakirena/ai-waiter/issues/63#issuecomment-6190296274
+
+- LOW: last_applied_hash упорядочивает журнал по часам приложения (finished_at, UUIDv7). При расхождении часов воркеров в scaled возможен ложный unchanged. Рекомендация (#16/#23): порядок по clock_timestamp() после lock или по identity-колонке. Обход — `--force`.
+- INFO: unchanged не видит ручного изменения меню в БД — ожидаемо по ADR-8.5, есть --force.
+- INFO: нет NFC-нормализации — только лишнее применение, не коллизия.
+- tenant_id во всех запросах журнала; source_ref — только имя файла; issues ≤ 100 и санитизированы; хеш после check_snapshot/resolve_currency; record_rejected_run в отдельной транзакции.
+- Исправление LOW #62 (unnest вместо tuple IN, пакеты по 1000 строк) подтверждено: https://github.com/shakirena/ai-waiter/issues/62#issuecomment-6190297637

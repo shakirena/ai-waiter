@@ -58,3 +58,16 @@
 - `source`, `source_ref`, `force` до #63 не используются.
 
 **Build:** ruff check / format OK · pytest 1218 passed, 3 skipped (с db; без Redis) · покрытие plan.py — 100 %, service.py — 99 % (не покрыты только заглушки #63)
+
+---
+
+## 🔒 Security Review (security-reviewer)
+
+**Verdict:** PASS (метка security:passed, https://github.com/shakirena/ai-waiter/issues/62#issuecomment-6167079534)
+**Delta:** c7bec9c..154c614
+**Findings:** CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 1, INFO: 1
+**Notes:**
+- [LOW] `_write_plan`: удаление тарифов `tuple_(menu_item_id, price_tier).in_(...)` — 2 параметра на пару; снимок `MAX_ITEMS` × `MAX_TIERS_PER_ITEM` (≈ 45 000 пар) превышал лимит asyncpg 32 767 и глубину выражения PostgreSQL → откат легитимного снимка.
+- [INFO] `ON CONFLICT` цен по PK без `tenant_id` — безопасно, но без пояснения.
+
+**Исправление (fix(#62), ветка story/63-menu-import):** удаление тарифов — один `DELETE … USING unnest(:ids::uuid[], :tiers::text[])` (3 параметра на любой объём); остальные записи плана (UPSERT категорий, позиций, цен, `UPDATE` скрытия и `synced_at`) — пакетами по `WRITE_BATCH_ROWS = 1000` строк/id (самая широкая строка — позиция, ≈ 11 параметров). К `ON CONFLICT` цен добавлен комментарий: `menu_item_id` только своего заведения + составной FK. db-тест `test_max_size_snapshot_fits_bind_parameter_limit`: 5000 позиций × 10 тарифов, затем 5000 × 1 — применяется (45 000 удалённых цен).

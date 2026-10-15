@@ -57,6 +57,7 @@ EXPECTED_COUNTS: dict[str, int] = {
     "orders": 1,
     "order_items": len(data.ORDER.lines),
     "order_events": 1,
+    "menu_sync_runs": 0,  # сид меню не синхронизирует: журнал пуст (#63)
 }
 
 

@@ -13,13 +13,15 @@
 
 Story #61. Модель проверяет форму элементов: длины строк, деньги (``MoneyStr``), тарифы,
 обязательный ``default``, лимиты размера. ``check_snapshot`` — дубли ``external_id``, ссылки позиций
-на категории снимка, валюту заведения. Сравнение с текущим меню — ``plan`` (#62); хеш — #63.
+на категории снимка, валюту заведения. Сравнение с текущим меню — ``plan`` (#62); хеш — ``snapshot_hash`` (#63).
 
 Строки обрезаются по краям (``str_strip_whitespace``); управляющие символы запрещены.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
@@ -401,11 +403,30 @@ def resolve_currency(snapshot: MenuSnapshot, tenant_currency: str) -> MenuSnapsh
 
 
 def snapshot_hash(snapshot: MenuSnapshot) -> str:
-    """SHA-256 (hex, 64 символа) канонической формы снимка (INT-1, ADR-8.5). Реализуется в #63.
+    """SHA-256 (hex, 64 символа) канонической формы снимка (INT-1, ADR-8.5, story #63).
 
     Каноническая форма: категории и позиции отсортированы по ``external_id``, тарифы — по имени,
     деньги — строкой с двумя знаками, ``None`` — явным ``null``; ``json.dumps(sort_keys=True,
     separators=(",", ":"), ensure_ascii=False)`` в UTF-8. Порядок строк в файле и формат файла
     (CSV/XLSX) на хеш не влияют. Вызывается после ``resolve_currency``.
+
+    Форма — ``model_dump(mode="json")``: ``MoneyStr`` даёт строку с двумя знаками (``"8.5"`` и
+    ``"8.50"`` — один хеш). При равных ``external_id`` (такой снимок отвергает ``check_snapshot``)
+    элементы упорядочиваются по своей канонической записи — хеш от порядка не зависит и тогда.
     """
-    raise NotImplementedError
+    data = snapshot.model_dump(mode="json")
+    canonical = {
+        "categories": _sorted_elements(data["categories"]),
+        "items": _sorted_elements(data["items"]),
+    }
+    return hashlib.sha256(_canonical_json(canonical).encode("utf-8")).hexdigest()
+
+
+def _canonical_json(value: object) -> str:
+    """JSON с отсортированными ключами (тарифы — по имени), без пробелов, UTF-8 как есть."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _sorted_elements(elements: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Категории или позиции по ``external_id``, затем по канонической записи элемента."""
+    return sorted(elements, key=lambda element: (element["external_id"], _canonical_json(element)))

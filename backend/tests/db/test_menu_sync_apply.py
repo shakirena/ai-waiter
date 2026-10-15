@@ -27,8 +27,8 @@ from app.menu_sync.service import (
     apply_menu_snapshot,
     load_current_menu,
 )
-from app.menu_sync.snapshot import MenuSnapshot
-from app.models.enums import MenuSyncSource, MenuSyncStatus
+from app.menu_sync.snapshot import MAX_ITEMS, MAX_TIERS_PER_ITEM, MenuSnapshot
+from app.models.enums import DEFAULT_PRICE_TIER, MenuSyncSource, MenuSyncStatus
 from app.models.menu import Category, MenuItem, MenuItemAllergen, MenuItemMeta, MenuItemPrice
 from tests.db.conftest import isolated_session
 from tests.db.factories import add, create_allergen, create_category, create_menu_item, create_tenant
@@ -193,8 +193,9 @@ async def test_ac62_scenario(db_session: AsyncSession) -> None:
     assert report.status is MenuSyncStatus.APPLIED
     assert report.dry_run is False
     assert report.issues == []
-    assert report.snapshot_hash is None
-    assert report.run_id is None
+    # #63: применение журналируется — хеш снимка и строка menu_sync_runs (подробно — test_menu_sync_runs.py).
+    assert report.snapshot_hash is not None
+    assert report.run_id is not None
     assert report.items == EntityCounts(created=1, updated=1, hidden=1, restored=1, unchanged=1)
     assert report.categories == EntityCounts(unchanged=1)
     assert report.prices == PriceCounts(created=2, updated=1)
@@ -394,6 +395,23 @@ async def test_issues_are_limited(db_session: AsyncSession) -> None:
     assert len(report.issues) == MAX_REPORTED_ISSUES
     assert report.issues_truncated == 20
     assert await _count(db_session, MenuItem, tenant.id) == 0
+
+
+async def test_max_size_snapshot_fits_bind_parameter_limit(db_session: AsyncSession) -> None:
+    """Security review #62 (LOW): ``MAX_ITEMS`` позиций × ``MAX_TIERS_PER_ITEM`` тарифов, затем тот же снимок
+    с одним тарифом — 45 000 удаляемых цен. Каждая запись укладывается в лимит asyncpg (32 767 параметров)."""
+    tenant = await create_tenant(db_session)
+    tiers = [DEFAULT_PRICE_TIER, *(f"t{n}" for n in range(1, MAX_TIERS_PER_ITEM))]
+    full = _snapshot(*[_snap_item(str(n), prices=dict.fromkeys(tiers, "8.00")) for n in range(MAX_ITEMS)])
+
+    created = await _apply(db_session, tenant.id, full)
+    assert created.status is MenuSyncStatus.APPLIED
+    assert created.prices == PriceCounts(created=MAX_ITEMS * MAX_TIERS_PER_ITEM)
+
+    reduced = await _apply(db_session, tenant.id, _snapshot(*[_snap_item(str(n)) for n in range(MAX_ITEMS)]))
+    assert reduced.status is MenuSyncStatus.APPLIED
+    assert reduced.prices == PriceCounts(deleted=MAX_ITEMS * (MAX_TIERS_PER_ITEM - 1))
+    assert await _count(db_session, MenuItemPrice, tenant.id) == MAX_ITEMS
 
 
 # ---------------------------------------------------------------- lock, заведение, загрузка

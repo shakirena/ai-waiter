@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from app.db.session import SERVER_SETTINGS, Database
+from app.db.session import SERVER_SETTINGS, UNPARSABLE_URL_TEXT, Database
 from tests.conftest import make_settings
 
 SECRET_URL = "postgresql+asyncpg://ai_waiter:pw-s3cret@db.invalid:5432/ai_waiter"
@@ -167,3 +167,11 @@ def test_describe_error_follows_implicit_context_once() -> None:
     except RuntimeError as exc:
         exc.__context__.__context__ = exc  # type: ignore[union-attr]  — цикл не зацикливает обход
         assert db.describe_error(exc) == "RuntimeError: second <- KeyError: 'first'"
+
+
+def test_describe_error_with_unparsable_url_hides_text() -> None:
+    """Нечисловой порт: ``make_url`` бросает и в ``_mask`` — где пароль, неизвестно, текст не показывается."""
+    db = _database("postgresql+asyncpg://u:Unparsable-Pa55@db.invalid:port/x")
+    text = db.describe_error(ValueError("invalid literal for int(): 'port' in u:Unparsable-Pa55@db.invalid"))
+    assert text == UNPARSABLE_URL_TEXT
+    assert "Unparsable-Pa55" not in text

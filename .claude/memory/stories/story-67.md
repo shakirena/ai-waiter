@@ -39,3 +39,31 @@
 **Тесты:** касса — округление `7.999999` → `8.00`, `price_vip` 0/NULL, `disabled` 1/NULL; приёмка — `python -m app.menu_sync check` → 0, `import --dry-run` в БД разработки
 **Зависимости:** #64 (формат), проверка импортом — #66
 **Arch doc:** docs/arch/feature-8-menu-import.md (раздел «Истории — файлы, тесты, порядок»)
+
+---
+
+## 💻 Разработка (developer)
+
+**Репозиторий:** касса «restoran», ветка `feature/67-ai-export-menu` (от origin/master fb7f374), коммит 8598378
+**Файлы:** `components/MenuSnapshotBuilder.php` (новый), `commands/AiExportMenuController.php` (новый), `tests/codeception/unit/components/MenuSnapshotBuilderTest.php` (новый), `tests/codeception/unit/_bootstrap.php` (алиас `@app`)
+**Реализация:**
+- `MenuSnapshotBuilder`: соответствие A.2 на массивах строк; `fetchRows()` — один SELECT (INNER JOIN type, LEFT JOIN store, цены `CAST AS DECIMAL(16,6)`); `buildRows()`, `formatPrice()` (half-up в целых копейках, без float/printf), `formatVipPrice()` (NULL/≤0 → пусто), `csvLine()` (RFC 4180). Переиспользуется в #18 для `PUT /menu`.
+- `disabled` 0/NULL → в файле, иначе не выгружается; колонки `is_available` нет; `currency` пусто.
+- Текст: невалидный UTF-8 → ошибка; управляющие символы → пробел, края обрезаются.
+- Команда: файл через `.tmp` и rename; коды 0/1 (данные, БД)/2 (аргумент)/3 (запись).
+**Тесты:** codeception unit (PHP 7.1, codeception 2.5.6): 12 tests, 48 assertions, OK. Старые ContactFormTest и LoginFormTest падают и на origin/master (несовместимость yii2-codeception).
+**Локальная выгрузка:** 362 позиции, 20 категорий, 1 не выгружена (disabled), файл в `local-data/`.
+**Отклонения:** собственная запись CSV вместо fputcsv (escape `\` в PHP 7.1); нормализация управляющих символов (в реальном названии была табуляция); AC-7 в spec исправлен — `is_available` не выгружается, `disabled = 1` в файл не попадает.
+
+---
+
+## 🔒 Security Review
+
+- Verdict: PASS (метка security:passed), 2026-10-14
+- Scope: касса restoran, ветка feature/67-ai-export-menu, 8598378 (delta от fb7f374): components/MenuSnapshotBuilder.php, commands/AiExportMenuController.php, tests/codeception/unit/components/MenuSnapshotBuilderTest.php, tests/codeception/unit/_bootstrap.php
+- Findings: CRITICAL 0, HIGH 0, MEDIUM 0, LOW 1, INFO 2
+- LOW: CSV-инъекция формулами (= + - @) при открытии файла в Excel — не экранировать (испортит названия), предупредить в инструкции к выгрузке (README ai-waiter).
+- INFO: текст yii\db\Exception в stderr может содержать пользователя и хост БД (без пароля); в ai-sync (#9) наружу передавать только SQLSTATE.
+- INFO: предсказуемое имя <файл>.tmp — безвредно, по желанию tempnam().
+- Заметки: SQL статический, только SELECT; невалидный UTF-8 отвергается, управляющие и Cf-символы заменяются (AI-3); CSV по RFC 4180; секретов в коммите нет; unit-тесты 12/12 OK.
+- Комментарий: https://github.com/shakirena/ai-waiter/issues/67#issuecomment-6165448425

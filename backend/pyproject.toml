@@ -15,6 +15,11 @@ dependencies = [
     "alembic>=1.14",
     # База часовых поясов для zoneinfo: на Windows системной нет (ADR-7.13).
     "tzdata",
+    # Импорт меню из XLSX (#65, ADR-8.7): openpyxl — только в app/menu_sync/files/xlsx_reader.py;
+    # defusedxml openpyxl подхватывает сам — защита от XML-бомб и внешних сущностей (XXE).
+    # <3.2: xlsx_reader опирается на ReadOnlyWorksheet._worksheet_path (тест в test_menu_xlsx).
+    "openpyxl>=3.1,<3.2",
+    "defusedxml>=0.7",
 ]
 
 [project.optional-dependencies]
@@ -74,8 +79,10 @@ known-third-party = ["alembic"]
 "apscheduler".msg = "APScheduler только в app/core/single/ — используйте TaskScheduler (ADR-1)"
 "psycopg".msg = "Драйвер БД — asyncpg (ADR-5): psycopg async требует смены event loop policy на Windows"
 "psycopg2".msg = "Драйвер БД — asyncpg (ADR-5)"
+"openpyxl".msg = "openpyxl только в app/menu_sync/files/xlsx_reader.py — используйте read_xlsx_table (ADR-8.7)"
 
 [tool.ruff.lint.per-file-ignores]
+"app/menu_sync/files/xlsx_reader.py" = ["TID251"]
 "app/core/scaled/**" = ["TID251"]
 "app/core/single/**" = ["TID251"]
 "tests/**" = ["S101", "S105", "S106", "TID251"]

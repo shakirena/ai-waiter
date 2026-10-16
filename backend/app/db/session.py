@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 SERVER_SETTINGS: dict[str, str] = {"application_name": "ai-waiter", "timezone": "UTC"}
 
 _MASK = "***"
+# Строка подключения не разбирается (например, нечисловой порт): где в тексте пароль, неизвестно.
+UNPARSABLE_URL_TEXT = "строка подключения DATABASE_URL не разбирается (проверьте её формат), текст ошибки скрыт"
 
 
 class Database:
@@ -106,7 +108,10 @@ class Database:
         return self._mask(" <- ".join(parts))
 
     def _mask(self, value: str) -> str:
-        password = make_url(self._url).password
+        try:
+            password = make_url(self._url).password
+        except Exception:  # ArgumentError, ValueError порта: пароль не выделить — текст не показываем
+            return UNPARSABLE_URL_TEXT
         if not password:
             return value
         for variant in sorted({password, quote(password, safe=""), quote_plus(password)}, key=len, reverse=True):

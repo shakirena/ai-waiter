@@ -11,6 +11,7 @@ import io
 import json
 import os
 import runpy
+import stat
 import subprocess
 import sys
 import uuid
@@ -615,3 +616,82 @@ def test_module_guard_raises_system_exit_with_main_code(
         runpy.run_module("app.menu_sync", run_name="__main__", alter_sys=True)
     assert info.value.code == cli.EXIT_INVALID_DATA
     assert "Проверка не пройдена" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- security review #66
+
+
+ESC = chr(27)
+
+
+@pytest.mark.parametrize("mode", [stat.S_IFCHR, stat.S_IFIFO, stat.S_IFSOCK, stat.S_IFBLK])
+def test_not_regular_file_is_exit_1_without_reading(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], mode: int
+) -> None:
+    """Устройство или канал (CON на Windows, /dev/stdin, FIFO на Linux) не читается: чтение может зависнуть."""
+    monkeypatch.setattr(cli, "_file_mode", lambda path: mode | 0o644)
+    monkeypatch.setattr(cli, "read_menu_file", lambda *a, **k: pytest.fail("файл не должен читаться"))
+    code, out, err = run(capsys, "check", "CON")
+    assert code == cli.EXIT_ERROR
+    assert out == ""
+    assert "Указан не обычный файл (устройство, канал или сокет): CON" in err
+
+
+def test_null_device_is_not_read(capsys: pytest.CaptureFixture[str]) -> None:
+    """Настоящее устройство ОС (``nul`` на Windows, ``/dev/null`` на Linux) — код 1, без чтения."""
+    code, _, err = run(capsys, "check", os.devnull)
+    assert code == cli.EXIT_ERROR
+    assert "не обычный файл" in err
+
+
+def test_stat_error_is_exit_1(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    def denied(path: Path) -> int:
+        raise PermissionError(13, "Отказано в доступе")
+
+    monkeypatch.setattr(cli, "_file_mode", denied)
+    code, _, err = run(capsys, "check", VALID_CSV)
+    assert code == cli.EXIT_ERROR
+    assert "Отказано в доступе" in err
+
+
+def test_mask_url_passwords() -> None:
+    text = f"unrecognized arguments: --databse-url {FAKE_URL} x://a:b@c d://nopass@h"
+    masked = cli.mask_url_passwords(text)
+    assert PASSWORD not in masked
+    assert "postgresql+asyncpg://dev:***@db.invalid/menu_dev" in masked
+    assert "x://a:***@c" in masked
+    assert "d://nopass@h" in masked
+
+
+def test_argument_error_hides_password(capsys: pytest.CaptureFixture[str]) -> None:
+    """Опечатка во флаге: argparse печатает нераспознанные аргументы, пароль в них маскируется."""
+    code, out, err = run(capsys, "import", "m.csv", "--tenant", TENANT, "--databse-url", FAKE_URL)
+    assert code == cli.EXIT_ERROR
+    assert out == ""
+    assert "unrecognized arguments" in err
+    assert PASSWORD not in err
+    assert "dev:***@db.invalid" in err
+
+
+def test_unparsable_database_url_is_exit_1_without_password(env: None, capsys: pytest.CaptureFixture[str]) -> None:
+    """Нечисловой порт: ``make_url`` падает и при создании движка, и при маскировании — без трассировки."""
+    url = f"postgresql+asyncpg://dev:{PASSWORD}@db.invalid:port/menu_dev"
+    code, out, err = run(capsys, "import", VALID_CSV, "--tenant", TENANT, "--database-url", url)
+    assert code == cli.EXIT_ERROR
+    assert out == ""
+    assert PASSWORD not in err
+    assert "Traceback" not in err
+    assert "строка подключения DATABASE_URL не разбирается" in err
+
+
+def test_database_error_text_is_escaped_and_limited(
+    capsys: pytest.CaptureFixture[str], fake_service: Callable[..., FakeService]
+) -> None:
+    fake_service(RuntimeError(f"bad{ESC}[31m" + "x" * 5000))
+    code, _, err = run(capsys, "import", VALID_CSV, "--tenant", TENANT)
+    assert code == cli.EXIT_ERROR
+    assert ESC not in err
+    assert chr(92) + "x1b[31m" in err
+    line = err.splitlines()[0]
+    assert len(line) <= len("Не удалось выполнить импорт меню: ") + cli.MAX_SHOWN_ERROR_CHARS
+    assert line.endswith("…")

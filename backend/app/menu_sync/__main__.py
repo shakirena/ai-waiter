@@ -33,6 +33,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
+import stat
 import sys
 import uuid
 from collections.abc import Sequence
@@ -66,6 +68,10 @@ EXIT_BUSY: Final[int] = 3
 PROG: Final[str] = "python -m app.menu_sync"
 # Имя и путь файла в выводе: невидимые символы экранированы, длина ограничена.
 MAX_SHOWN_PATH_CHARS: Final[int] = 300
+# Текст ошибки БД в выводе: невидимые символы экранированы, длина ограничена.
+MAX_SHOWN_ERROR_CHARS: Final[int] = 2000
+# Пароль в строке подключения внутри сообщения argparse (опечатка во флаге рядом с --database-url).
+_URL_PASSWORD_RE: Final[re.Pattern[str]] = re.compile(r"(://[^:/@\s]*:)[^@\s]+@")
 MIGRATIONS_HINT: Final[str] = "Проверьте DATABASE_URL и примените миграции: uv run alembic upgrade head"
 
 # Подписи статуса: (применение, пробный прогон).
@@ -84,7 +90,12 @@ class _ArgumentParser(argparse.ArgumentParser):
 
     def error(self, message: str) -> NoReturn:
         self.print_usage(sys.stderr)
-        self.exit(EXIT_ERROR, f"{self.prog}: ошибка в аргументах: {message}\n")
+        self.exit(EXIT_ERROR, f"{self.prog}: ошибка в аргументах: {mask_url_passwords(message)}\n")
+
+
+def mask_url_passwords(text: str) -> str:
+    """Заменить пароль в строках подключения вида ``схема://user:пароль@хост`` на ``***``."""
+    return _URL_PASSWORD_RE.sub(r"\1***@", text)
 
 
 def _tenant_uuid(value: str) -> uuid.UUID:
@@ -163,16 +174,26 @@ def _file_name(file_arg: str) -> str:
 def _read(file_arg: str, sheet: str | None) -> ParsedMenuFile | None:
     """Разобрать файл; ошибка файловой системы — сообщение в stderr и ``None`` (код 1)."""
     path = Path(file_arg)
-    if path.is_dir():
-        _error(f"Указан каталог, а не файл: {_shown(file_arg)}")
-        return None
     try:
+        mode = _file_mode(path)
+        if stat.S_ISDIR(mode):
+            _error(f"Указан каталог, а не файл: {_shown(file_arg)}")
+            return None
+        if not stat.S_ISREG(mode):
+            # Устройство (CON, NUL на Windows; /dev/stdin, FIFO на Linux): чтение может зависнуть.
+            _error(f"Указан не обычный файл (устройство, канал или сокет): {_shown(file_arg)}")
+            return None
         return read_menu_file(path, sheet=sheet)
     except FileNotFoundError:
         _error(f"Файл не найден: {_shown(file_arg)}")
     except OSError as exc:
         _error(f"Не удалось прочитать файл {_shown(file_arg)}: {exc.strerror or type(exc).__name__}")
     return None
+
+
+def _file_mode(path: Path) -> int:
+    """``st_mode`` файла (по ссылке); отдельная функция — для тестов."""
+    return path.stat().st_mode
 
 
 def _file_info(file_arg: str, parsed: ParsedMenuFile) -> dict[str, Any]:
@@ -391,7 +412,8 @@ def run_import(args: argparse.Namespace) -> int:
             _error(f"Заведение {request.tenant_id} не найдено: проверьте --tenant и DATABASE_URL.")
             return EXIT_ERROR
         except Exception as exc:
-            _error(f"Не удалось выполнить импорт меню: {database.describe_error(exc)}")
+            description = safe_text(database.describe_error(exc), MAX_SHOWN_ERROR_CHARS)
+            _error(f"Не удалось выполнить импорт меню: {description}")
             _error(MIGRATIONS_HINT)
             return EXIT_ERROR
 

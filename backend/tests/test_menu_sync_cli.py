@@ -222,6 +222,63 @@ def test_check_errors_are_exit_2_with_rows(bad_csv: Path, capsys: pytest.Capture
     assert "Категорий" not in out
 
 
+def test_ac64_check_reports_row_4_price_and_row_7_duplicate_of_row_3(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AC-4 через ``check``: BOM, ``;``, цены с запятой; строка 4 — ``abc``, строка 7 повторяет строку 3."""
+    lines = [
+        HEADER.replace(",", ";"),
+        "10;Salatlar;001;Çoban salatı;4,50",
+        "10;Salatlar;002;Paytaxt salatı;6",
+        "10;Salatlar;003;Göyərti;abc",
+        "20;İçkilər;201;Ayran;1,5",
+        "20;İçkilər;202;Çay;3,00",
+        "20;İçkilər;002;Limonad;2,80",
+    ]
+    path = tmp_path / "ac4.csv"
+    path.write_bytes(("\r\n".join(lines) + "\r\n").encode("utf-8-sig"))
+
+    code, out, err = run(capsys, "check", path)
+
+    assert code == cli.EXIT_INVALID_DATA
+    assert err == ""
+    assert "Проблемы: ошибок 2, предупреждений 0" in out
+    price_line = next(line for line in out.splitlines() if "(строка 4, колонка price_default)" in line)
+    assert any("а" <= ch <= "я" for ch in price_line.split("):", 1)[1].lower())  # причина на русском
+    assert "«abc»" in price_line
+    assert "ошибка (строка 7, колонка external_id): повтор external_id позиции (строка 3)" in out
+    assert "Проверка не пройдена" in out
+
+    fixed = [*lines[:3], "10;Salatlar;003;Göyərti;3,20", *lines[4:6], "20;İçkilər;204;Limonad;2,80"]
+    path.write_bytes(("\r\n".join(fixed) + "\r\n").encode("utf-8-sig"))
+    code, out, _ = run(capsys, "check", path)
+    assert code == cli.EXIT_OK, out
+    assert "Проверка пройдена" in out
+
+
+def test_check_accepts_pos_export_format(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Приёмка #67 со стороны ядра: ``check`` на файле в формате выгрузки кассы (ТЗ A.2) — код 0.
+
+    Формат — как у ``php yii ai-export-menu``: UTF-8 без BOM, ``,``, ``\\n``, без ``is_available``,
+    пустые ``currency`` и ``price_vip``. Данные вымышленные.
+    """
+    path = write(
+        tmp_path,
+        "menu.csv",
+        "category_external_id,category_name,category_sort_key,external_id,name,price_default,price_vip,"
+        "currency,station,sort_key\n"
+        "3,Demo Salads,1,15,Demo Salad,8.00,9.50,,Demo Kitchen,2\n"
+        '3,Demo Salads,1,16,"Demo Salad, large",4.50,,,Demo Kitchen,3\n',
+    )
+
+    code, out, err = run(capsys, "check", path)
+
+    assert code == cli.EXIT_OK, out
+    assert err == ""
+    assert "Проверка пройдена" in out
+    assert "Колонки is_available нет: наличие позиций не меняется." in out
+
+
 def test_check_json(bad_csv: Path, capsys: pytest.CaptureFixture[str]) -> None:
     code, out, _ = run(capsys, "check", bad_csv, "--json")
     assert code == cli.EXIT_INVALID_DATA

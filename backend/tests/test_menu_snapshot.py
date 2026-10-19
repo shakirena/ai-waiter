@@ -45,6 +45,7 @@ from app.menu_sync.snapshot import (
     issues_from_validation_error,
     parse_snapshot,
     resolve_currency,
+    snapshot_hash,
 )
 from app.models.enums import MenuSyncStatus
 
@@ -122,6 +123,23 @@ def test_ac61_valid_snapshot_of_same_size_has_no_issues() -> None:
     assert snapshot.items[1].is_available is None
     assert snapshot.items[2].is_available is False
     assert check_snapshot(snapshot, "AZN") == []
+
+
+def test_ac61_valid_snapshot_hash_does_not_depend_on_item_order() -> None:
+    """AC-1, последний пункт Then: хеш корректного снимка того же размера не зависит от порядка позиций."""
+    data = _valid_data()
+    reordered = {**data, "items": list(reversed(data["items"]))}
+
+    snapshot, issues = parse_snapshot(data, "AZN")
+    snapshot_reordered, issues_reordered = parse_snapshot(reordered, "AZN")
+
+    assert issues == issues_reordered == []
+    assert snapshot is not None
+    assert snapshot_reordered is not None
+    assert [i.external_id for i in snapshot.items] != [i.external_id for i in snapshot_reordered.items]
+    digest = snapshot_hash(resolve_currency(snapshot, "AZN"))
+    assert digest == snapshot_hash(resolve_currency(snapshot_reordered, "AZN"))
+    assert re.fullmatch(r"[0-9a-f]{64}", digest)
 
 
 def test_snapshot_json_uses_money_strings() -> None:

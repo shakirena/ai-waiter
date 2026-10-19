@@ -153,6 +153,46 @@ def test_valid_fixture_parses_completely() -> None:
     assert result.item_rows["203"] == 10
 
 
+# ---------------------------------------------------------------- формат выгрузки кассы (#67, ТЗ A.2)
+
+# Файл так, как его пишет выгрузка кассы (spec FR-8, ТЗ A.2, ADR-8.8): UTF-8 без BOM, разделитель ``,``,
+# окончание строки ``\n``, кавычки RFC 4180 только при необходимости; колонки в порядке выгрузки, колонки
+# ``is_available`` нет (снятые с продажи позиции не выгружаются), ``currency`` пусто, ``price_vip`` пусто
+# при ``price_vip = 0``, цены уже округлены до двух знаков (``7.999999`` → ``8.00``). Данные вымышленные.
+POS_EXPORT_LINES = (
+    "category_external_id,category_name,category_sort_key,external_id,name,price_default,price_vip,"
+    "currency,station,sort_key",
+    "3,Demo Salads,1,15,Demo Salad,8.00,9.50,,Demo Kitchen,2",
+    '3,Demo Salads,1,16,"Demo Salad, large",4.50,,,Demo Kitchen,3',  # price_vip = 0 → пусто
+    '7,Demo Drinks,,40,"Demo ""House"" Tea",1.20,,,,',  # нет vid и склада; кавычки в названии
+)
+
+
+def test_pos_export_format_from_tz_a2_is_accepted() -> None:
+    result = parse_menu_bytes(("\n".join(POS_EXPORT_LINES) + "\n").encode("utf-8"), "menu.csv")
+
+    assert result.issues == [], [issue.to_dict() for issue in result.issues]
+    assert result.file_format is FileFormat.CSV
+    assert result.rows_total == 3
+    assert result.has_availability is False  # наличие позиций при импорте не меняется
+    snapshot = result.snapshot
+    assert snapshot is not None
+    assert [(c.external_id, c.name, c.sort_key) for c in snapshot.categories] == [
+        ("3", "Demo Salads", "1"),
+        ("7", "Demo Drinks", ""),
+    ]
+    items = {item.external_id: item for item in snapshot.items}
+    assert items["15"].prices == {"default": Decimal("8.00"), "vip": Decimal("9.50")}
+    assert str(items["15"].prices["default"]) == "8.00"
+    assert items["16"].prices == {"default": Decimal("4.50")}  # пустой price_vip — тарифа нет
+    assert items["16"].name == "Demo Salad, large"
+    assert items["40"].name == 'Demo "House" Tea'
+    assert (items["40"].station, items["40"].sort_key) == (None, "")
+    assert (items["15"].station, items["15"].sort_key, items["15"].category_external_id) == ("Demo Kitchen", "2", "3")
+    assert all(item.currency is None for item in snapshot.items)  # валюта заведения
+    assert all(item.is_available is None for item in snapshot.items)
+
+
 def test_comma_and_semicolon_files_give_same_snapshot() -> None:
     comma = parse(HEADER + ",price_vip", '1,A,7,"Dolma, böyük",8.50,10')
     semicolon = parse(HEADER_SC + ";price_vip", "1;A;7;Dolma, böyük;8,50;10")

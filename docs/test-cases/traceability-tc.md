@@ -1,6 +1,6 @@
 # Test Case Traceability Matrix
 
-Обновлено: 2026-10-13. Feature #6 «Каркас проекта» (stories #37–#45, прогон 2026-10-02) и feature #7 «Модель данных v1 и миграции Alembic» (stories #48–#54, #56, прогон 2026-10-12, финальный прогон G5 2026-10-13). Столбец «Авто» — где тест выполняется автоматически (для #7 пути относительно `backend/tests/`, `db/` — тесты с маркером `db`, нужен PostgreSQL); «Прогон» — результат на дату прогона.
+Обновлено: 2026-10-19. Feature #6 «Каркас проекта» (stories #37–#45, прогон 2026-10-02), feature #7 «Модель данных v1 и миграции Alembic» (stories #48–#54, #56, прогон 2026-10-12, финальный прогон G5 2026-10-13) и feature #8 «Импорт меню из CSV/XLSX» (stories #61–#67, прогон 2026-10-19). Столбец «Авто» — где тест выполняется автоматически (для #7 и #8 пути относительно `backend/tests/`, `db/` — тесты с маркером `db`, нужен PostgreSQL); «Прогон» — результат на дату прогона.
 
 ## Feature #6 — Каркас проекта
 
@@ -120,7 +120,6 @@
 
 Итого по #7: 57 TC (PASS 55, из них ручных 2 — TC-48-008, TC-54-007; FAIL 1 — TC-53-007, известный дефект сида #58, тест `xfail(strict=True)` добавлен tester 2026-10-13; не выполнен 1 — TC-53-006, ручной).
 
-Всего в матрице: 94 TC.
 
 ## Cross-reference между историями (#7)
 - #48 → все stories #7 (база моделей, Alembic, фикстура `db`, guard `*_test`); #48 → #56 (`Database.ping()`)
@@ -129,3 +128,100 @@
 - #51 → #52 (заказ принадлежит визиту)
 - #49–#52 → #54 (инварианты `tenant_id`, `NUMERIC(10,2)`, `timestamptz` на реальной схеме), #53 (сид наполняет все таблицы)
 - #37 → #56 (TC-37-005 расширен проверкой БД); #44 → #54 (шаги CI)
+
+## Feature #8 — Импорт меню из CSV/XLSX
+
+Прогон qa-lead 2026-10-19 (ветка `feature/8-menu-import`): полный `uv run pytest -q --cov=app` — 1669 passed, 3 skipped (тесты настоящего Redis), покрытие `app` 100%. Код #67 — в репозитории кассы, TC ручные (приёмка пользователем на реальном меню; данные заведения в репозиторий не попадают). Полные списки тестов — в `docs/test-cases/feature-61-menu-snapshot.md` … `feature-67-restoran-export.md`.
+
+| TC ID | Title | Feature | AC | Priority | E2E Automated | Авто (unit/static) | Прогон |
+|-------|-------|---------|-----|----------|---------------|--------------------|--------|
+| TC-61-001 | Три ошибки снимка за одну проверку | #61 | AC-1 | Critical | No | test_menu_snapshot.py::test_ac61_three_errors_at_once, ::test_shape_error_does_not_hide_cross_errors_of_other_items | PASS |
+| TC-61-002 | Корректный снимок без ошибок, хеш не зависит от порядка | #61 | AC-1 | Critical | No | test_menu_snapshot.py::test_ac61_valid_snapshot_of_same_size_has_no_issues, ::test_ac61_valid_snapshot_hash_does_not_depend_on_item_order; test_menu_sync_runs.py | PASS |
+| TC-61-003 | MoneyStr — Decimal без float | #61 | AC-1, NFR-4 | Critical | No | test_money.py | PASS |
+| TC-61-004 | Ошибки формы, дубли, тарифы, пустой снимок, лимиты | #61 | AC-1, FR-1 | High | No | test_menu_snapshot.py | PASS |
+| TC-61-005 | Валюта заведения и нулевая цена | #61 | AC-1, FR-1 | High | No | test_menu_snapshot.py, test_menu_sync_runs.py | PASS |
+| TC-61-006 | Управляющие символы и санитизация отчёта | #61 | AC-1, NFR-6 | High | No | test_menu_snapshot.py | PASS |
+| TC-61-007 | Отчёт: не больше 100 проблем | #61 | FR-3 | Medium | No | test_menu_snapshot.py | PASS |
+| TC-61-008 | Границы импортов menu_sync и schemas | #61 | NFR-10 | Medium | No | test_import_boundaries.py | PASS |
+| TC-62-001 | Сценарий AC: обновление, скрытие, возврат, создание | #62 | AC-2 | Critical | No | db/test_menu_sync_apply.py::test_ac62_scenario | PASS |
+| TC-62-002 | Изоляция заведений при применении | #62 | AC-2, NFR-1 | Critical | No | db/test_menu_sync_apply.py::test_ac62_scenario, ::test_load_current_menu_is_tenant_scoped, ::test_unknown_tenant | PASS |
+| TC-62-003 | План: создание, обновление, скрытие, возврат | #62 | AC-2, FR-2 | High | No | test_menu_plan.py, db/test_menu_sync_apply.py | PASS |
+| TC-62-004 | Цены тарифов и наличие | #62 | FR-2, NFR-2 | High | No | test_menu_plan.py, db/test_menu_sync_apply.py::test_prices_and_availability | PASS |
+| TC-62-005 | «Всё или ничего», пустой снимок, чужая валюта | #62 | FR-3 | Critical | No | db/test_menu_sync_apply.py | PASS |
+| TC-62-006 | Защита от массового скрытия | #62 | FR-3 | High | No | test_menu_plan.py, db/test_menu_sync_apply.py::test_mass_hide_rejected_and_allowed | PASS |
+| TC-62-007 | Пробный прогон dry_run | #62 | FR-3 | High | No | db/test_menu_sync_apply.py::test_dry_run_writes_nothing_and_matches_real_counts | PASS |
+| TC-62-008 | Advisory lock занят — MenuSyncBusyError | #62 | FR-3, NFR-3 | High | No | db/test_menu_sync_apply.py::test_busy_lock_raises | PASS |
+| TC-62-009 | Снимок максимального размера | #62 | ADR-8.2, NFR-5 | Medium | No | db/test_menu_sync_apply.py::test_max_size_snapshot_fits_bind_parameter_limit | PASS |
+| TC-62-010 | 2 000 позиций не дольше 10 с на сервере пилота | #62 | NFR-5 | Medium | No | — (ручной) | НЕ ВЫПОЛНЕН |
+| TC-63-001 | Тот же снимок в другом порядке — unchanged | #63 | AC-3 | Critical | No | db/test_menu_sync_runs.py::test_ac63_same_snapshot_in_other_order_is_unchanged | PASS |
+| TC-63-002 | Хеш снимка канонический | #63 | AC-3, FR-1 | High | No | test_menu_sync_runs.py | PASS |
+| TC-63-003 | force, изменённый снимок, другой источник | #63 | FR-4 | High | No | db/test_menu_sync_runs.py | PASS |
+| TC-63-004 | rejected журналируется после отката | #63 | FR-4, NFR-6 | High | No | db/test_menu_sync_runs.py | PASS |
+| TC-63-005 | Пробный прогон не пишет журнал | #63 | FR-4 | Medium | No | db/test_menu_sync_runs.py::test_dry_run_is_not_journaled | PASS |
+| TC-63-006 | В журнал — только имя файла | #63 | NFR-6 | High | No | db/test_menu_sync_runs.py, test_menu_sync_runs.py | PASS |
+| TC-63-007 | Журнал и хеш изолированы по заведению | #63 | NFR-1 | Critical | No | db/test_menu_sync_runs.py::test_journal_and_hash_are_tenant_scoped | PASS |
+| TC-63-008 | Ревизия 0005 и CHECK menu_sync_runs | #63 | FR-4 | High | No | db/test_menu_sync_runs.py, test_migrations_offline.py, db/test_migrations.py, db/test_alembic.py, test_models_metadata.py | PASS |
+| TC-64-001 | Ошибки строк 4 и 7, снимка нет | #64 | AC-4 | Critical | No | test_menu_csv.py::test_ac64_errors_with_rows_and_no_snapshot; test_menu_sync_cli.py::test_ac64_check_reports_row_4_price_and_row_7_duplicate_of_row_3 | PASS |
+| TC-64-002 | Исправленный файл — Decimal("4.50") | #64 | AC-4 | Critical | No | test_menu_csv.py::test_ac64_fixed_file_gives_snapshot_with_decimal_comma | PASS |
+| TC-64-003 | Синтетический пример, разделители, BOM | #64 | AC-4, FR-5 | High | No | test_menu_csv.py | PASS |
+| TC-64-004 | Кодировка, кавычки, пустой файл, формат | #64 | FR-5 | High | No | test_menu_csv.py | PASS |
+| TC-64-005 | Заголовок: регистр, #-колонки, неизвестные | #64 | FR-5 | High | No | test_menu_csv.py | PASS |
+| TC-64-006 | Деньги в ячейках CSV | #64 | AC-4, NFR-4 | High | No | test_menu_csv.py | PASS |
+| TC-64-007 | external_id и категории | #64 | AC-4 | High | No | test_menu_csv.py | PASS |
+| TC-64-008 | Колонка is_available | #64 | FR-5 | High | No | test_menu_csv.py | PASS |
+| TC-64-009 | Физические номера строк, сбор всех ошибок | #64 | AC-4, FR-5 | Medium | No | test_menu_csv.py | PASS |
+| TC-64-010 | Лимиты файла и защита от DoS | #64 | ADR-8.2, NFR-6 | High | No | test_menu_csv.py | PASS |
+| TC-64-011 | Управляющие символы в ячейках | #64 | NFR-6 | High | No | test_menu_csv.py | PASS |
+| TC-64-012 | Граница импортов пакета files | #64 | NFR-10 | Medium | No | test_import_boundaries.py | PASS |
+| TC-64-013 | Описание формата в README | #64 | FR-5 | Low | No | — (ручной) | PASS (ручной, 2026-10-19) |
+| TC-65-001 | Лист Menu, снимок совпадает с CSV-примером | #65 | AC-5 | Critical | No | test_menu_xlsx.py::test_ac65_menu_sheet_matches_csv_example | PASS |
+| TC-65-002 | Выбор листа: --sheet, menu, первый | #65 | AC-5 | High | No | test_menu_xlsx.py, test_menu_sync_cli.py::test_check_xlsx_with_sheet | PASS |
+| TC-65-003 | Числа в ячейках: external_id, цены, наличие | #65 | AC-5, NFR-4 | High | No | test_menu_xlsx.py | PASS |
+| TC-65-004 | Даты, ошибки Excel, формулы | #65 | FR-6 | High | No | test_menu_xlsx.py | PASS |
+| TC-65-005 | Заголовок и пустые листы | #65 | FR-6 | Medium | No | test_menu_xlsx.py | PASS |
+| TC-65-006 | Не-XLSX, макросы, повреждённая книга | #65 | FR-6, NFR-6 | Critical | No | test_menu_xlsx.py, test_menu_csv.py | PASS |
+| TC-65-007 | XXE и XML-бомбы (defusedxml) | #65 | NFR-6 | Critical | No | test_menu_xlsx.py::test_defusedxml_is_used_by_openpyxl, ::test_xml_entities_are_rejected | PASS |
+| TC-65-008 | Zip-бомба и лимиты архива | #65 | NFR-6 | Critical | No | test_menu_xlsx.py | PASS |
+| TC-65-009 | DoS по CPU: строки, ячейки, элементы XML | #65 | NFR-6 | High | No | test_menu_xlsx.py | PASS |
+| TC-65-010 | Книга только для чтения и закрывается; openpyxl изолирован | #65 | NFR-10 | Medium | No | test_menu_xlsx.py, test_import_boundaries.py | PASS |
+| TC-66-001 | dry-run → applied → unchanged, код 0 | #66 | AC-6 | Critical | No | db/test_menu_sync_cli.py::test_ac66_dry_run_then_applied_then_unchanged; test_menu_sync_cli.py | PASS |
+| TC-66-002 | check без БД и .env | #66 | FR-7 | High | No | test_menu_sync_cli.py | PASS |
+| TC-66-003 | Ошибки в данных — код 2, rejected | #66 | AC-6, FR-7 | Critical | No | db/test_menu_sync_cli.py, test_menu_sync_cli.py | PASS |
+| TC-66-004 | Массовое скрытие и --allow-mass-hide | #66 | FR-3, FR-7 | High | No | db/test_menu_sync_cli.py::test_mass_hide_needs_explicit_permission | PASS |
+| TC-66-005 | Блокировка занята — код 3 | #66 | AC-6, NFR-3 | High | No | db/test_menu_sync_cli.py::test_busy_lock_is_exit_3; test_menu_sync_cli.py::test_import_busy_is_exit_3 | PASS |
+| TC-66-006 | Ошибки окружения и аргументов — код 1 | #66 | FR-7 | High | No | db/test_menu_sync_cli.py::test_unknown_tenant_is_exit_1; test_menu_sync_cli.py | PASS |
+| TC-66-007 | Пароль БД и путь не раскрываются | #66 | NFR-6 | Critical | No | db/test_menu_sync_cli.py::test_wrong_password_is_not_shown; test_menu_sync_cli.py | PASS |
+| TC-66-008 | --json и кодировка консоли | #66 | FR-7, NFR-7 | Medium | No | test_menu_sync_cli.py | PASS |
+| TC-66-009 | Нет колонки is_available — наличие не меняется | #66 | FR-5 | High | No | db/test_menu_sync_cli.py::test_missing_availability_column_keeps_availability | PASS |
+| TC-66-010 | APP_ENV=prod, точка входа, справка | #66 | FR-7 | Medium | No | test_menu_sync_cli.py | PASS |
+| TC-66-011 | README: команда, коды выхода, расписание | #66 | FR-7 | Low | No | — (ручной) | PASS (ручной, 2026-10-19) |
+| TC-67-001 | Выгрузка проходит check с кодом 0 | #67 | AC-7 | Critical | No | ручной; формат со стороны ядра — test_menu_csv.py::test_pos_export_format_from_tz_a2_is_accepted, test_menu_sync_cli.py::test_check_accepts_pos_export_format | PASS (ручной, приёмка пользователем) |
+| TC-67-002 | price_vip = 0 → пусто | #67 | AC-7 | High | No | — (ручной; unit-тесты в репозитории кассы) | PASS (ручной) |
+| TC-67-003 | disabled = 1 → позиции нет в файле | #67 | AC-7 | High | No | — (ручной; unit-тесты в репозитории кассы) | PASS (ручной) |
+| TC-67-004 | Цена 7.999999 → 8.00 | #67 | AC-7 | High | No | — (ручной; unit-тесты в репозитории кассы) | PASS (ручной) |
+| TC-67-005 | Файл в local-data/, вне git | #67 | AC-7, NFR-9 | Critical | No | — (ручной, git check-ignore) | PASS (ручной, 2026-10-19) |
+| TC-67-006 | Выгрузка импортируется: dry-run, import | #67 | AC-7, FR-8 | High | No | — (ручной) | PASS (ручной, приёмка пользователем: 362 позиции) |
+| TC-67-007 | В ядре нет кода под кассу | #67 | ADR-8.8, NFR-9 | High | No | — (ручной) | PASS (ручной, 2026-10-19) |
+
+Итого по #8: 67 TC (PASS 66, из них ручных 9 — TC-64-013, TC-66-011, TC-67-001…TC-67-007; не выполнен 1 — TC-62-010, производительность на сервере пилота, автотеста нет).
+
+### AC → TC → автотест (#8)
+
+| AC | Story | TC | Автотест |
+|----|-------|----|----------|
+| AC-1 | #61 | TC-61-001, TC-61-002 | test_menu_snapshot.py::test_ac61_three_errors_at_once, ::test_ac61_valid_snapshot_of_same_size_has_no_issues, ::test_ac61_valid_snapshot_hash_does_not_depend_on_item_order |
+| AC-2 | #62 | TC-62-001, TC-62-002 | db/test_menu_sync_apply.py::test_ac62_scenario |
+| AC-3 | #63 | TC-63-001 | db/test_menu_sync_runs.py::test_ac63_same_snapshot_in_other_order_is_unchanged |
+| AC-4 | #64 | TC-64-001, TC-64-002 | test_menu_csv.py::test_ac64_errors_with_rows_and_no_snapshot, ::test_ac64_fixed_file_gives_snapshot_with_decimal_comma; test_menu_sync_cli.py::test_ac64_check_reports_row_4_price_and_row_7_duplicate_of_row_3 |
+| AC-5 | #65 | TC-65-001 | test_menu_xlsx.py::test_ac65_menu_sheet_matches_csv_example |
+| AC-6 | #66 | TC-66-001, TC-66-003, TC-66-005 | db/test_menu_sync_cli.py::test_ac66_dry_run_then_applied_then_unchanged, ::test_parse_errors_are_rejected_and_journaled, ::test_busy_lock_is_exit_3 |
+| AC-7 | #67 | TC-67-001…TC-67-006 | ручная приёмка (код в репозитории кассы); формат выгрузки в ядре — test_menu_csv.py::test_pos_export_format_from_tz_a2_is_accepted, test_menu_sync_cli.py::test_check_accepts_pos_export_format |
+
+Всего в матрице: 161 TC.
+
+## Cross-reference между историями (#8)
+- #61 → #62 (снимок применяется), #63 (`snapshot_hash`), #64, #65 (разбор файла даёт `MenuSnapshot`)
+- #62 → #63 (журнал добавляет шаги 3 и 6 в `apply_menu_snapshot`), #66 (CLI вызывает сервис)
+- #64 → #65 (общий `format.py`), #66 (`check`/`import` печатают отчёт), #67 (формат выгрузки)
+- #66 → #67 (проверка выгрузки `check` и `import`)
+- #7: #50 → #62 (таблицы меню, RESTRICT, составные FK); #54 → #63 (инварианты схемы для `menu_sync_runs`); #53 → #63 (после сида журнал пуст)

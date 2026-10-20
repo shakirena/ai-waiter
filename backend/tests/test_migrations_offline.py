@@ -27,6 +27,7 @@ REVISION_TABLES: dict[str, set[str]] = {
     "0002": {"categories", "menu_items", "menu_item_prices", "menu_item_meta", "allergens", "menu_item_allergens"},
     "0003": {"visits", "messages", "cart_items"},
     "0004": {"orders", "order_items", "order_events"},
+    "0005": {"menu_sync_runs"},
 }
 
 
@@ -156,8 +157,10 @@ def test_offline_sql_creates_and_drops_append_only_trigger() -> None:
     assert down_sql.index("DROP TABLE order_events") < down_sql.index("DROP TABLE orders")
 
 
-def test_offline_upgrade_head_has_all_fifteen_tables_and_trigger() -> None:
-    """ADR-7.11: офлайн-SQL всей цепочки содержит 15 таблиц модели и триггер журнала."""
+def test_offline_upgrade_head_has_all_tables_and_trigger() -> None:
+    """ADR-7.11: офлайн-SQL всей цепочки содержит ровно таблицы ревизий (15 модели #7 и журнал
+    ``menu_sync_runs`` #63) и триггер журнала заказа."""
     sql = _offline("upgrade", "head")
-    assert len(_created_tables(sql)) == 15
+    assert _created_tables(sql) == set().union(*REVISION_TABLES.values())
+    assert len(_created_tables(sql)) == 16
     assert "CREATE TRIGGER trg_order_events_append_only" in sql

@@ -346,6 +346,37 @@ backend/tests/fixtures/menu/menu_valid.csv синтетический приме
 
 Предстоит создать developer-у: `backend/alembic/versions/0005_menu_sync_runs.py`, тесты (ниже), зависимости `openpyxl`/`defusedxml`, банлист ruff для `openpyxl`, раздел README «Импорт меню». Фронтенда в #8 нет.
 
+Создано/изменено developer-ом (фактическое состояние после разработки и тестирования, doc-sync 2026-10-20):
+
+```
+backend/pyproject.toml, backend/uv.lock            # + openpyxl>=3.1,<3.2, defusedxml>=0.7; ruff banned-api для openpyxl (#65)
+backend/alembic/versions/0005_menu_sync_runs.py    # таблица menu_sync_runs, down_revision = "0004" (#63)
+backend/app/schemas/money.py                       # MoneyStr, parse_money, format_money (#61)
+backend/app/menu_sync/snapshot.py, report.py       # снимок, проверка, snapshot_hash (#61, #63)
+backend/app/menu_sync/plan.py, service.py          # план, применение, lock, журнал (#62, #63)
+backend/app/menu_sync/files/*.py                   # format, csv_reader (#64), xlsx_reader (#65)
+backend/app/menu_sync/__main__.py                  # CLI check/import (#66)
+backend/app/models/menu_sync.py, models/__init__.py # MenuSyncRun подключена (#63)
+backend/app/db/session.py                          # UNPARSABLE_URL_TEXT: неразбираемая строка подключения не показывается (#66, security review)
+README.md                                          # раздел «Импорт меню из файла», выгрузка «restoran» (#64, #66, #67)
+backend/tests/test_money.py                        # без БД: MoneyStr (#61)
+backend/tests/test_menu_snapshot.py                # без БД: AC-1, ошибки формы, дубли, валюта, лимиты, санитизация; хеш не зависит от порядка позиций (G5) (#61)
+backend/tests/test_import_boundaries.py            # без БД: openpyxl только в xlsx_reader, menu_sync без fastapi, files без sqlalchemy/app.db, core без menu_sync (#61, #64, #65)
+backend/tests/test_menu_plan.py                    # без БД: строки ADR-8.3, mass_hide на границе, счётчики (#62)
+backend/tests/test_menu_sync_runs.py               # без БД: snapshot_hash, имя файла без каталога (#63)
+backend/tests/test_menu_csv.py                     # без БД: AC-4, разделители, BOM, кодировка, заголовок, лимиты; формат выгрузки ТЗ A.2 (G5) (#64, #67)
+backend/tests/test_menu_xlsx.py                    # без БД: AC-5, числа, формулы, даты, zip-бомба, XXE, DoS по CPU (#65)
+backend/tests/test_menu_sync_cli.py                # без БД: check, коды выхода, --json, маскирование; AC-4 через check и формат выгрузки кассы (G5) (#66)
+backend/tests/test_db_session.py                   # + маскирование неразбираемой строки подключения (#66)
+backend/tests/test_models_metadata.py, test_migrations_offline.py # + menu_sync_runs, ревизия 0005 (DEC-009) (#63)
+backend/tests/db/test_menu_sync_apply.py           # AC-2, изоляция заведений, dry_run, lock, mass_hide, снимок максимального размера (#62)
+backend/tests/db/test_menu_sync_runs.py            # AC-3, force, rejected после отката, журнал по заведению (#63)
+backend/tests/db/test_menu_sync_cli.py             # AC-6: dry-run → applied → unchanged, коды 1/2/3, пароль не раскрывается (#66)
+backend/tests/db/test_migrations.py, db/test_seed.py # + menu_sync_runs (#63)
+```
+
+Отличия от плана ниже: отдельных фикстур с ошибками в `tests/fixtures/menu/` нет — файлы с ошибками собираются в самих тестах (`tmp_path`); тест границы импортов вынесен в общий `tests/test_import_boundaries.py`; раздел README называется «Импорт меню из файла». После фазы тестирования (doc-sync 2026-10-20) добавлены `test_menu_snapshot.py::test_ac61_valid_snapshot_hash_does_not_depend_on_item_order`, `test_menu_sync_cli.py::test_ac64_check_reports_row_4_price_and_row_7_duplicate_of_row_3`, `test_menu_sync_cli.py::test_check_accepts_pos_export_format`, `test_menu_csv.py::test_pos_export_format_from_tz_a2_is_accepted`. Структурированной записи итога в лог (spec NFR-8) нет — bug #70. Замер NFR-5 на сервере пилота (TC-62-010) — при G6.
+
 ---
 
 ## Истории — файлы, тесты, порядок

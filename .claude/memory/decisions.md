@@ -103,3 +103,10 @@
 **Reason:** CLAUDE.md «Деньги», ADR-7.4 («общий тип Money появляется в #10/#12» — появляется раньше, в #8).
 **Applies to:** #61 (вводит тип), #64/#65 (деньги из файла), #10, #12, #16, #17 и любые схемы с деньгами.
 **Revisit when:** дробные количества/цены за вес (открытый вопрос 4 #7).
+
+## DEC-014: Демо-данные и боевая база — проверка по содержимому БД
+
+**Decision:** Политика «демо-заведение `DEMO_TENANT_ID` только в базе разработки» проверяется по содержимому базы, а не только по `APP_ENV` машины. Запросы — только в `app/seed/guard.py` (`foreign_tenants_exist`, `ensure_seed_target`, `demo_tenant_exists`; `DEMO_TENANT_ID` — из `app.seed.data`, не дублируется). (1) `python -m app.seed`: после отказа при `APP_ENV=prod` и загрузки `Settings`, первым запросом транзакции сида (READ COMMITTED, без `LOCK TABLE`) — есть заведение кроме демо → `ForeignTenantsError`, откат, код 2 (`EXIT_FORBIDDEN`; 2 = «запрещено политикой», 1 = ошибка конфигурации/БД); проверка в CLI, не в `apply_seed`. (2) Приложение при `APP_ENV=prod`: `DemoDataMonitor` (`app/api/demo_data.py`, `app.state.demo_data_monitor`) — один раз в lifespan после `start_container` (для лога; таймаут 2 с, старт не прерывает) и на каждом `/health/ready` параллельно с `database`; демо найдено или результат неизвестен → 503 `not_ready`; лог только при смене состояния, без `exc_info`, ошибки через `describe_error`. Тело `/health/ready` не меняется (ключа `demo_data` нет — не подсказывать, что демо-токены действуют; ждёт подтверждения пользователя). Процесс в prod при демо не завершается.
+**Reason:** docs/arch/feature-60-demo-data-guard.md ADR-60.1–60.3; arch #6 «недоступная зависимость не роняет процесс»; в `single` readiness никто не опрашивает, в `scaled` compose/Caddy смотрят на `/health`.
+**Applies to:** #60, #71; story гостевого входа по QR (рекомендация: отклонять `DEMO_TENANT_ID` при `APP_ENV=prod`); #30/G6 (чек-лист `APP_ENV=prod`); любые будущие проверки политик в `/health/ready`.
+**Revisit when:** пользователь выберет отдельный ключ в `checks` (открытый вопрос 1 arch #60), появится оркестратор, снимающий трафик по readiness, или флаг `--force` для сида.

@@ -6,7 +6,12 @@
 
 ## Ready for Dev
 
-*(пусто)*
+- #60 (сид не загружает демо в базу с другими заведениями, AC-1) и #71 (выделено из #60: `/health/ready` 503 в prod при демо-заведении, AC-2) — kanban:ready-for-dev, G2 PASS 2026-10-25. Spec: docs/specs/feature-60-demo-data-guard.md; arch: docs/arch/feature-60-demo-data-guard.md (ADR-60.1…60.3, DEC-014); заглушки: backend/app/seed/guard.py, backend/app/api/demo_data.py. Истории независимы, size:s. Ветка анализа feature/60-demo-seed-guard.
+  - Ждёт подтверждения пользователя: тело `/health/ready` без ключа для демо (ADR-60.3, рекомендация); не блокирует разработку.
+  - Для developer #60: CLI-тесты в tests/test_seed.py, подменяющие только `apply_seed`, должны подменять и `ensure_seed_target`.
+  - Для security review #71: проверить, не попадает ли DSN в traceback `exc_info=True` в `app/api/health.py::_check` (существующий код #56).
+  - Окружение: в локальной `.venv` нет `openpyxl` — перед G3 выполнить `uv sync --extra scaled`.
+  - Рекомендация для анализа #9 (комментарий в issue): в prod отклонять вход по токенам демо-заведения.
 
 ## In Development (WIP: 0/5)
 

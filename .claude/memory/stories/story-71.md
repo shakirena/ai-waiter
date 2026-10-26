@@ -21,7 +21,7 @@
 
 **Таблицы:** нет изменений (`EXISTS` по PK `tenants.id = DEMO_TENANT_ID`)
 **Миграция:** нет
-**API:** `GET /health/ready` при `APP_ENV=prod`: демо найдено или проверка не выполнена (ошибка/таймаут) → 503 `{"status": "not_ready", "checks": {"database": "ok", "redis": …}}` — тело и OpenAPI без изменений, ключа `demo_data` нет (ADR-60.3, открытый вопрос 1 — подтверждает пользователь). Вне prod проверка не вызывается. `/health` не меняется
+**API:** `GET /health/ready` при `APP_ENV=prod`: демо найдено или проверка не выполнена (ошибка/таймаут) → 503 `{"status": "not_ready", "checks": {"database": "ok", "redis": …}}` — тело и OpenAPI без изменений, ключа `demo_data` нет (ADR-60.3, подтверждено пользователем 2026-10-26). Вне prod проверка не вызывается. `/health` не меняется
 **Решение (ADR-60.2):** сочетание — `DemoDataMonitor` (`app.state.demo_data_monitor`, создаёт `create_app`, `DemoDataMonitor(READINESS_CHECK_TIMEOUT)`): (1) lifespan после `start_container` один раз `await refresh(container.database)` — чтобы WARNING был в логе службы Windows без опросов; таймаут 2 с, не бросает, старт не прерывает; (2) каждый `/health/ready` в prod — `refresh` в том же `gather`, без кэша (удаление демо видно со следующего опроса). Отказ стартовать — отвергнут (ломает «стартуем при недоступной БД», цикл перезапусков службы/контейнера, Caddy `depends_on`)
 **Лог:** только при смене состояния: → FOUND WARNING `DEMO_FOUND_WARNING`; → UNKNOWN WARNING `DEMO_CHECK_FAILED` + `describe_error`; FOUND → ABSENT INFO; без `exc_info`; `component="demo_data"`
 **События/задачи:** нет (TaskScheduler не используется)

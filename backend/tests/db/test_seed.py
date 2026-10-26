@@ -4,7 +4,9 @@
   таблицах, полный набор данных, возврат к эталонным значениям, защита чужого стола;
 - ``python -m app.seed`` (``main``) по-настоящему фиксирует транзакцию дважды подряд, после
   теста схема пересоздаётся миграциями (данные сида не попадают в другие тесты);
-- ошибка подключения не показывает пароль.
+- ошибка подключения не показывает пароль;
+- #60 (ADR-60.1): ``app.seed.guard`` на настоящей базе; в базе есть заведение, кроме демо, —
+  ``main`` возвращает 2 и ничего не записывает (ни в пустую часть, ни в демо-строки).
 """
 
 from __future__ import annotations
@@ -26,6 +28,13 @@ from app.models.reference import EU14_ALLERGEN_CODES
 from app.models.tenant import Hall, Table, Tenant
 from app.models.visit import CartItem, Message, Visit
 from app.seed import data
+from app.seed.guard import (
+    FOREIGN_TENANTS_REFUSAL,
+    ForeignTenantsError,
+    demo_tenant_exists,
+    ensure_seed_target,
+    foreign_tenants_exist,
+)
 from app.seed.loader import SeedError, apply_seed
 from tests.db.conftest import alembic_command, reset_schema, run_in_thread
 from tests.db.factories import add, build_visit, create_order, create_table, create_tenant, create_visit
@@ -287,3 +296,119 @@ def test_cli_wrong_password_is_not_shown(committed_seed: str, capsys: pytest.Cap
     captured = capsys.readouterr()
     assert wrong not in captured.err + captured.out
     assert "Не удалось загрузить демо-данные" in captured.err
+
+
+# ---------------------------------------------------------------- #60: проверка целевой базы
+
+
+async def test_guard_on_empty_base(db_session: AsyncSession) -> None:
+    """E-1: пустая база — заведений нет, сид разрешён."""
+    assert await foreign_tenants_exist(db_session) is False
+    assert await demo_tenant_exists(db_session) is False
+    await ensure_seed_target(db_session)
+
+
+async def test_guard_on_demo_only_base(db_session: AsyncSession) -> None:
+    """E-2: только демо-заведение — сид разрешён (повторный запуск идемпотентен)."""
+    await apply_seed(db_session)
+    assert await foreign_tenants_exist(db_session) is False
+    assert await demo_tenant_exists(db_session) is True
+    await ensure_seed_target(db_session)
+
+
+async def test_guard_on_demo_and_other_base(db_session: AsyncSession) -> None:
+    """E-3: демо и другое заведение — сид запрещён."""
+    await apply_seed(db_session)
+    await create_tenant(db_session, name="Другое заведение")
+    assert await foreign_tenants_exist(db_session) is True
+    assert await demo_tenant_exists(db_session) is True
+    with pytest.raises(ForeignTenantsError):
+        await ensure_seed_target(db_session)
+
+
+async def test_guard_on_other_only_base(db_session: AsyncSession) -> None:
+    """E-4: только другое заведение — сид запрещён, демо-заведения нет."""
+    await create_tenant(db_session, name="Другое заведение")
+    assert await foreign_tenants_exist(db_session) is True
+    assert await demo_tenant_exists(db_session) is False
+    with pytest.raises(ForeignTenantsError):
+        await ensure_seed_target(db_session)
+
+
+async def _commit_other_tenant(database_url: str) -> None:
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with AsyncSession(engine) as session, session.begin():
+            await create_tenant(session, name="Другое заведение")
+    finally:
+        await engine.dispose()
+
+
+UPDATED_AT_TABLES_SQL = (
+    "SELECT table_name FROM information_schema.columns WHERE table_schema = 'public' AND column_name = 'updated_at'"
+)
+
+
+async def _committed_updated_at(database_url: str) -> dict[str, list[object]]:
+    """``updated_at`` всех строк каждой таблицы с этим столбцом (отсортированные значения)."""
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with AsyncSession(engine) as session:
+            names = sorted((await session.scalars(text(UPDATED_AT_TABLES_SQL))).all())
+            return {
+                name: list(await session.scalars(text(f'SELECT updated_at FROM "{name}" ORDER BY updated_at')))  # noqa: S608
+                for name in names
+            }
+    finally:
+        await engine.dispose()
+
+
+def _assert_refused(url: str, capsys: pytest.CaptureFixture[str]) -> None:
+    assert seed_cli.main(["--database-url", url]) == seed_cli.EXIT_FORBIDDEN == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert FOREIGN_TENANTS_REFUSAL in captured.err
+    password = make_url(url).password
+    if password:
+        assert password not in captured.err
+
+
+def test_cli_refuses_base_with_other_tenant(committed_seed: str, capsys: pytest.CaptureFixture[str]) -> None:
+    """AC-1, E-4: в базе только другое заведение — код 2, число строк не изменилось, демо нет."""
+    url = committed_seed
+    run_in_thread(lambda: asyncio.run(_commit_other_tenant(url)))
+    before = run_in_thread(lambda: asyncio.run(_committed_counts(url)))
+    assert before["tenants"] == 1
+
+    _assert_refused(url, capsys)
+
+    after = run_in_thread(lambda: asyncio.run(_committed_counts(url)))
+    assert after == before
+
+    async def demo_present() -> bool:
+        engine = create_async_engine(url, poolclass=NullPool)
+        try:
+            async with AsyncSession(engine) as session:
+                return await demo_tenant_exists(session)
+        finally:
+            await engine.dispose()
+
+    assert run_in_thread(lambda: asyncio.run(demo_present())) is False
+
+
+def test_cli_refuses_demo_plus_other_without_updating_demo(
+    committed_seed: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """E-3: демо и другое заведение — код 2, демо-строки не обновлены (``updated_at`` прежний)."""
+    url = committed_seed
+    assert seed_cli.main(["--database-url", url]) == 0
+    capsys.readouterr()
+    run_in_thread(lambda: asyncio.run(_commit_other_tenant(url)))
+    counts_before = run_in_thread(lambda: asyncio.run(_committed_counts(url)))
+    stamps_before = run_in_thread(lambda: asyncio.run(_committed_updated_at(url)))
+    assert stamps_before["tenants"]
+
+    _assert_refused(url, capsys)
+
+    assert run_in_thread(lambda: asyncio.run(_committed_counts(url))) == counts_before
+    assert run_in_thread(lambda: asyncio.run(_committed_updated_at(url))) == stamps_before

@@ -29,3 +29,20 @@
 **Тесты:** unit `tests/test_seed_guard.py` (новый), дополнения `tests/test_seed.py` — существующие CLI-тесты с подменой `apply_seed` должны подменять и `seed_cli.ensure_seed_target` (иначе запрос уйдёт в `db.invalid` → код 1); db — дополнения `tests/db/test_seed.py` (AC-1/E-4: код 2, счётчики не изменились; E-3: демо-строки не обновлены)
 **Code stubs:** `backend/app/seed/guard.py` (`FOREIGN_TENANTS_REFUSAL`, `ForeignTenantsError`, `foreign_tenants_exist`, `ensure_seed_target`, `demo_tenant_exists`); правки — `app/seed/__main__.py`, `app/seed/__init__.py`, README
 **Arch doc:** docs/arch/feature-60-demo-data-guard.md (ADR-60.1); DEC-014
+
+---
+
+## 💻 Реализация (developer)
+
+**Branch:** feature/60-demo-seed-guard (worktree `worktree-f60-confirm`)
+**Новые файлы:**
+- backend/tests/test_seed_guard.py
+
+**Изменённые файлы:**
+- backend/app/seed/guard.py — `foreign_tenants_exist`, `ensure_seed_target`, `demo_tenant_exists` (для #71, по arch)
+- backend/app/seed/__main__.py — `ensure_seed_target` первым запросом транзакции; `ForeignTenantsError` → код 2 до `except Exception`; `EXIT_FORBIDDEN = 2`, `EXIT_PROD_FORBIDDEN` — алиас; docstring
+- backend/app/seed/__init__.py, README.md — проверка целевой базы, код 2
+- backend/tests/test_seed.py — фикстура `seed_target_ok` для CLI-тестов с подменой `apply_seed`; код 2, порядок prod → проверка, ошибка БД в проверке → 1
+- backend/tests/db/test_seed.py — guard на пустой / только демо / демо + другое / только другое; CLI: AC-1/E-4 (счётчики прежние, демо нет), E-3 (`updated_at` всех строк прежний)
+
+**Build:** ruff OK · pytest unit 1410 passed · db 280 passed · frontend не затронут

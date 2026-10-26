@@ -14,7 +14,11 @@
 
 from __future__ import annotations
 
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.tenant import Tenant
+from app.seed.data import DEMO_TENANT_ID
 
 FOREIGN_TENANTS_REFUSAL = (
     "В целевой базе уже есть заведения, кроме демо-заведения: демо-данные в такую базу не загружаются, "
@@ -35,12 +39,13 @@ async def foreign_tenants_exist(session: AsyncSession) -> bool:
 
     Один запрос, без блокировок (ADR-60.1: READ COMMITTED, гонка закрыта #71). Ошибку БД
     (нет таблицы ``tenants``, нет соединения) не перехватывает — CLI превращает её в код 1."""
-    raise NotImplementedError
+    return bool(await session.scalar(select(exists().where(Tenant.id != DEMO_TENANT_ID))))
 
 
 async def ensure_seed_target(session: AsyncSession) -> None:
     """Вызывается сидом в его транзакции до ``apply_seed``; ``foreign_tenants_exist`` → ``ForeignTenantsError``."""
-    raise NotImplementedError
+    if await foreign_tenants_exist(session):
+        raise ForeignTenantsError
 
 
 async def demo_tenant_exists(session: AsyncSession) -> bool:
@@ -48,4 +53,4 @@ async def demo_tenant_exists(session: AsyncSession) -> bool:
 
     Транзакцию не открывает и не фиксирует (только чтение); ошибки не перехватывает —
     это делает ``DemoDataMonitor`` (неизвестный результат ≠ «демо нет», ADR-60.2)."""
-    raise NotImplementedError
+    return bool(await session.scalar(select(exists().where(Tenant.id == DEMO_TENANT_ID))))

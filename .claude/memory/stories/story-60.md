@@ -46,3 +46,13 @@
 - backend/tests/db/test_seed.py — guard на пустой / только демо / демо + другое / только другое; CLI: AC-1/E-4 (счётчики прежние, демо нет), E-3 (`updated_at` всех строк прежний)
 
 **Build:** ruff OK · pytest unit 1410 passed · db 280 passed · frontend не затронут
+
+---
+
+## 🔒 Security Review
+
+**Verdict:** PASS (2026-10-26) · **Scope:** `app/seed/guard.py`, `app/seed/__main__.py`, `app/seed/__init__.py`, README, тесты сида
+**Findings:** CRITICAL 0 · HIGH 0 · MEDIUM 0 · LOW 1 · INFO 3
+- LOW (до дельты, #7): `describe_error` маскирует только пароль; хост/порт/пользователь из текста ошибки драйвера (например, `Connect call failed ('host', 5432)`) могут попасть в stderr сида — расхождение с буквой NFR-1 «хоста или порта»
+- INFO: `health.py::_check` — `logger.warning(..., exc_info=True)`: traceback без маскирования (вне дельты, к #71/отдельному bug)
+- INFO: гонка READ COMMITTED (ADR-60.1) принята, ловится #71; флагов обхода нет; prod-отказ до создания `Database`

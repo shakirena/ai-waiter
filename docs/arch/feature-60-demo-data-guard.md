@@ -173,6 +173,8 @@
 ## Security
 
 - **Утечка секретов (NFR-1).** Ни сообщения CLI, ни лог, ни тело `/health/ready` не содержат строки подключения, хоста, порта и пароля. Ошибки БД выводятся только через `Database.describe_error`. Сообщение сида не раскрывает число, id и названия чужих заведений. В логе #71 допустимо упоминать демо-заведение: его id и токены и так публичны.
+  - **Известное ограничение (security review #60, LOW, существует с #7).** `describe_error` маскирует только пароль. Хост, порт и имя пользователя из текста ошибки драйвера (например, `Connect call failed ('<host>', 5432)`) могут попасть в stderr сида (код 1) и в WARNING `DEMO_CHECK_FAILED` (#71). Тексты, которые формирует сама фича (`PROD_REFUSAL`, `FOREIGN_TENANTS_REFUSAL`, `DEMO_FOUND_WARNING`, тело `/health/ready`), деталей подключения не содержат. Устранение — доработка `describe_error` отдельной задачей, вне #60.
+  - **`exc_info=True` в `app/api/health.py::_check` (INFO, существующий код #56).** Traceback исключения ping пишется в лог без маскирования и может содержать DSN. Проверить и решить при реализации #71 или отдельным bug; в `DemoDataMonitor` `exc_info` не используется (раздел «Логирование»).
 - **Раскрытие информации.** Ключа `demo_data` в публичном теле нет (ADR-60.3).
 - **Нагрузка.** `/health/ready` публичный и без rate-limit (как сейчас). В prod каждый запрос — два коротких запроса к БД с таймаутом 2 с. Флуд упирается в пул (10 соединений) и мешает остальным запросам так же, как и сейчас с `SELECT 1`. Порядок величины не меняется (см. «Риски»).
 - **Мультиарендность.** Запросы читают `tenants` без фильтра по `tenant_id` — это осознанно: проверка платформенная, а не в контексте заведения. `tenants` — корневая таблица без `tenant_id` (DEC-010). Данные заведений наружу не выходят: результат — один бит, и он остаётся в процессе.
@@ -237,11 +239,11 @@
 ## Module Structure (code stubs)
 
 ```
-backend/app/seed/guard.py          # СОЗДАН (stub): FOREIGN_TENANTS_REFUSAL, ForeignTenantsError,
-                                   #   foreign_tenants_exist, ensure_seed_target, demo_tenant_exists
-backend/app/seed/__main__.py       # #60: _run вызывает ensure_seed_target; main ловит ForeignTenantsError → 2;
+backend/app/seed/guard.py          # #60 РЕАЛИЗОВАН: FOREIGN_TENANTS_REFUSAL, ForeignTenantsError,
+                                   #   foreign_tenants_exist, ensure_seed_target, demo_tenant_exists (для #71)
+backend/app/seed/__main__.py       # #60 РЕАЛИЗОВАН: _run вызывает ensure_seed_target; main ловит ForeignTenantsError → 2;
                                    #   EXIT_FORBIDDEN = 2 (EXIT_PROD_FORBIDDEN — алиас); docstring кодов
-backend/app/seed/__init__.py       # #60: строка про проверку целевой базы
+backend/app/seed/__init__.py       # #60 РЕАЛИЗОВАН: строка про проверку целевой базы
 backend/app/api/demo_data.py       # СОЗДАН (stub): DemoDataState, DemoDataMonitor(check_timeout).refresh/_transition,
                                    #   DEMO_FOUND_WARNING, DEMO_CHECK_FAILED, DEMO_GONE_INFO
 backend/app/api/deps.py            # #71: get_demo_data_monitor(request) -> DemoDataMonitor
@@ -250,7 +252,21 @@ backend/app/main.py                # #71: create_app → app.state.demo_data_mon
                                    #   lifespan: в prod после start_container — await monitor.refresh(container.database)
 ```
 
-Заглушки к коду пока не подключены, поэтому существующие тесты не меняются. Frontend не затронут.
+Состояние на 2026-10-26: #60 реализован (коммит 4ff4749, G4 PASS, security:passed); заглушка `app/api/demo_data.py` (#71) к коду не подключена, `deps.py`, `health.py`, `main.py` не менялись. Frontend не затронут.
+
+### Реализация #60 — файлы и тесты (doc-sync после G4)
+
+| Файл | Что сделано |
+|---|---|
+| `app/seed/guard.py` | `foreign_tenants_exist` (`select(exists().where(Tenant.id != DEMO_TENANT_ID))`), `ensure_seed_target` → `ForeignTenantsError`, `FOREIGN_TENANTS_REFUSAL`; `demo_tenant_exists` (для #71) |
+| `app/seed/__main__.py` | порядок `main`: аргументы → `APP_ENV=prod` (2) → `Settings` (1) → транзакция `ensure_seed_target` → `apply_seed`; `except ForeignTenantsError` (2) перед `except Exception` (1); `EXIT_FORBIDDEN = 2`, `EXIT_PROD_FORBIDDEN = EXIT_FORBIDDEN` |
+| `app/seed/__init__.py`, `README.md` | описание проверки целевой базы и кода 2 |
+
+| Тест (относительно `backend/`) | Что проверяет |
+|---|---|
+| `tests/test_seed_guard.py` | скомпилированный SQL `EXISTS` с `<>`/`=` и параметром `DEMO_TENANT_ID`; `None` → `False`; `ensure_seed_target` бросает/не бросает; ошибка БД не перехватывается; текст `FOREIGN_TENANTS_REFUSAL` на русском без деталей подключения |
+| `tests/test_seed.py` | фикстура `seed_target_ok` (подмена `ensure_seed_target` для прежних CLI-тестов); `test_foreign_tenants_are_refused_with_exit_code_2`, `test_exit_prod_forbidden_is_alias_of_exit_forbidden`, `test_prod_refusal_happens_before_target_check`, `test_target_check_runs_before_apply_seed_in_same_session`, `test_database_error_in_target_check_is_exit_1_without_password` |
+| `tests/db/test_seed.py` | `test_guard_on_empty_base`, `test_guard_on_demo_only_base`, `test_guard_on_demo_and_other_base`, `test_guard_on_other_only_base`; CLI `test_cli_refuses_base_with_other_tenant` (AC-1, E-4), `test_cli_refuses_demo_plus_other_without_updating_demo` (E-3); E-1/E-2 — прежний `test_cli_twice_commits_same_data` |
 
 ---
 

@@ -6,20 +6,21 @@
 
 ## Ready for Dev
 
-- #60 (сид не загружает демо в базу с другими заведениями, AC-1) и #71 (выделено из #60: `/health/ready` 503 в prod при демо-заведении, AC-2) — kanban:ready-for-dev, G2 PASS 2026-10-25. Spec: docs/specs/feature-60-demo-data-guard.md; arch: docs/arch/feature-60-demo-data-guard.md (ADR-60.1…60.3, DEC-014); заглушки: backend/app/seed/guard.py, backend/app/api/demo_data.py. Истории независимы, size:s. Ветка анализа feature/60-demo-seed-guard.
+- #71 (выделено из #60: `/health/ready` 503 в prod при демо-заведении, AC-2) — kanban:ready-for-dev, G2 PASS 2026-10-25, size:s. Spec: docs/specs/feature-60-demo-data-guard.md; arch: docs/arch/feature-60-demo-data-guard.md (ADR-60.2, ADR-60.3, DEC-014); заглушка: backend/app/api/demo_data.py. `app.seed.guard.demo_tenant_exists` уже реализована в рамках #60.
   - Тело `/health/ready` без ключа для демо (ADR-60.3) подтверждено пользователем 2026-10-26.
-  - Для developer #60: CLI-тесты в tests/test_seed.py, подменяющие только `apply_seed`, должны подменять и `ensure_seed_target`.
-  - Для security review #71: проверить, не попадает ли DSN в traceback `exc_info=True` в `app/api/health.py::_check` (существующий код #56).
-  - Окружение: в локальной `.venv` нет `openpyxl` — перед G3 выполнить `uv sync --extra scaled`.
+  - Для developer/security #71: `app/api/health.py::_check` логирует `exc_info=True` (INFO из security review #60, код #56) — traceback без маскирования может содержать DSN; решить в #71 или отдельным bug.
+  - Для #71: WARNING `DEMO_CHECK_FAILED` идёт через `describe_error`, который маскирует только пароль (см. LOW ниже).
   - Рекомендация для анализа #9 (комментарий в issue): в prod отклонять вход по токенам демо-заведения.
 
 ## In Development (WIP: 0/5)
 
 *(пусто)*
 
-## In Testing (WIP: 0/5)
+## In Testing (WIP: 1/5)
 
-*(пусто по историям)*
+- #60 (сид не загружает демо в базу с другими заведениями, AC-1) — kanban:testing, G3 PASS, G4 PASS, security:passed 2026-10-26. Код: коммит 4ff4749 (backend/app/seed/guard.py, `__main__`.py, `__init__`.py, README; тесты tests/test_seed_guard.py, tests/test_seed.py, tests/db/test_seed.py), ветка feature/60-demo-seed-guard, PR #72. Build: unit 1410 passed, db 280 passed. Doc-sync после G4 выполнен 2026-10-26 (docs/traceability.md, раздел «Реализация #60» в arch).
+  - Security LOW (существует с #7): `Database.describe_error` маскирует только пароль; хост/порт/пользователь из текста ошибки драйвера могут попасть в stderr сида (код 1) — расходится с буквой NFR-1 spec («хоста или порта»). Ограничение зафиксировано в spec NFR-1 и arch (Security); исправление — отдельная задача на `describe_error`.
+  - Для TC (G5): AC-1, E-1…E-6, E-10; ручной сценарий — запуск сида с `--database-url` базы с другим заведением.
 
 ## Ready to Deploy (группа feature #8: импорт меню из CSV/XLSX)
 

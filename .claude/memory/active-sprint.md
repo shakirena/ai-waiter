@@ -16,11 +16,15 @@
 
 *(пусто)*
 
-## In Testing (WIP: 1/5)
+## In Testing (WIP: 0/5)
 
-- #60 (сид не загружает демо в базу с другими заведениями, AC-1) — kanban:testing, G3 PASS, G4 PASS, security:passed 2026-10-26. Код: коммит 4ff4749 (backend/app/seed/guard.py, `__main__`.py, `__init__`.py, README; тесты tests/test_seed_guard.py, tests/test_seed.py, tests/db/test_seed.py), ветка feature/60-demo-seed-guard, PR #72. Build: unit 1410 passed, db 280 passed. Doc-sync после G4 выполнен 2026-10-26 (docs/traceability.md, раздел «Реализация #60» в arch).
-  - Security LOW (существует с #7): `Database.describe_error` маскирует только пароль; хост/порт/пользователь из текста ошибки драйвера могут попасть в stderr сида (код 1) — расходится с буквой NFR-1 spec («хоста или порта»). Ограничение зафиксировано в spec NFR-1 и arch (Security); исправление — отдельная задача на `describe_error`.
-  - Для TC (G5): AC-1, E-1…E-6, E-10; ручной сценарий — запуск сида с `--database-url` базы с другим заведением.
+*(пусто)*
+
+## Ready to Deploy (#60)
+
+- #60 (сид не загружает демо в базу с другими заведениями, AC-1) — kanban:ready-to-deploy, qa:passed, security:passed, G5 PASS 2026-10-28 (G3, G4 PASS, security review 2026-10-26). Код: коммит 4ff4749 (backend/app/seed/guard.py, `__main__`.py, `__init__`.py, README), тесты G5 — коммит 7d3e0dd; ветка feature/60-demo-seed-guard, PR #72. TC: docs/test-cases/feature-60-demo-seed-guard.md (10 TC, PASS 10, ручной 1 — TC-60-010). Прогон: 1692 passed, 3 skipped (Redis), покрытие `app/seed` 100%, `app` 99% (непокрыт только app/api/demo_data.py — заглушка #71). Doc-sync после G5 выполнен 2026-10-28 (docs/traceability.md, раздел «Реализация #60» в arch).
+  - Для G6: пункт чек-листа «APP_ENV=prod на боевом сервере»; Linux — по CI PR #72.
+  - Security LOW (существует с #7): `Database.describe_error` маскирует только пароль; хост/порт/пользователь из текста ошибки драйвера могут попасть в stderr сида (код 1) — расходится с буквой NFR-1 spec («хоста или порта»). Ограничение зафиксировано в spec NFR-1, arch (Security) и TC-60-006; исправление — отдельная задача на `describe_error`.
 
 ## Ready to Deploy (группа feature #8: импорт меню из CSV/XLSX)
 

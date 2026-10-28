@@ -254,7 +254,7 @@ backend/app/main.py                # #71: create_app → app.state.demo_data_mon
 
 Состояние на 2026-10-26: #60 реализован (коммит 4ff4749, G4 PASS, security:passed); заглушка `app/api/demo_data.py` (#71) к коду не подключена, `deps.py`, `health.py`, `main.py` не менялись. Frontend не затронут.
 
-### Реализация #60 — файлы и тесты (doc-sync после G4)
+### Реализация #60 — файлы и тесты (doc-sync после G4, дополнено после G5)
 
 | Файл | Что сделано |
 |---|---|
@@ -265,8 +265,10 @@ backend/app/main.py                # #71: create_app → app.state.demo_data_mon
 | Тест (относительно `backend/`) | Что проверяет |
 |---|---|
 | `tests/test_seed_guard.py` | скомпилированный SQL `EXISTS` с `<>`/`=` и параметром `DEMO_TENANT_ID`; `None` → `False`; `ensure_seed_target` бросает/не бросает; ошибка БД не перехватывается; текст `FOREIGN_TENANTS_REFUSAL` на русском без деталей подключения |
-| `tests/test_seed.py` | фикстура `seed_target_ok` (подмена `ensure_seed_target` для прежних CLI-тестов); `test_foreign_tenants_are_refused_with_exit_code_2`, `test_exit_prod_forbidden_is_alias_of_exit_forbidden`, `test_prod_refusal_happens_before_target_check`, `test_target_check_runs_before_apply_seed_in_same_session`, `test_database_error_in_target_check_is_exit_1_without_password` |
-| `tests/db/test_seed.py` | `test_guard_on_empty_base`, `test_guard_on_demo_only_base`, `test_guard_on_demo_and_other_base`, `test_guard_on_other_only_base`; CLI `test_cli_refuses_base_with_other_tenant` (AC-1, E-4), `test_cli_refuses_demo_plus_other_without_updating_demo` (E-3); E-1/E-2 — прежний `test_cli_twice_commits_same_data` |
+| `tests/test_seed.py` | фикстура `seed_target_ok` (подмена `ensure_seed_target` для прежних CLI-тестов); `test_foreign_tenants_are_refused_with_exit_code_2`, `test_exit_prod_forbidden_is_alias_of_exit_forbidden`, `test_prod_refusal_happens_before_target_check`, `test_target_check_runs_before_apply_seed_in_same_session`, `test_database_error_in_target_check_is_exit_1_without_password`; G5: `test_foreign_tenants_refusal_is_same_in_both_modes[single|scaled]` (E-10, NFR-2: отказ одинаков при `APP_MODE=single`/`scaled`, Redis не нужен, в stderr ровно текст отказа без пароля и адреса Redis) |
+| `tests/db/test_seed.py` | `test_guard_on_empty_base`, `test_guard_on_demo_only_base`, `test_guard_on_demo_and_other_base`, `test_guard_on_other_only_base`; CLI `test_cli_refuses_base_with_other_tenant` (AC-1, E-4), `test_cli_refuses_demo_plus_other_without_updating_demo` (E-3); E-1/E-2 — прежний `test_cli_twice_commits_same_data`. G5: общий хелпер `_assert_refused` усилен — stdout пуст, stderr ровно `FOREIGN_TENANTS_REFUSAL`, нет пароля, хоста, имени базы, пользователя, `postgresql`, UUID и названия найденного заведения (AC-1, NFR-1, ADR-60.1); `test_cli_without_schema_fails_with_hint` — нет таблицы `tenants`: код 1 с подсказкой `alembic upgrade head`, текста отказа нет (E-6) |
+
+TC: `docs/test-cases/feature-60-demo-seed-guard.md` (TC-60-001…TC-60-010, G5 PASS 2026-10-28; ручной TC-60-010).
 
 ---
 

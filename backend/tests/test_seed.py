@@ -463,3 +463,23 @@ def test_module_guard_raises_system_exit_with_main_code(
         runpy.run_module("app.seed", run_name="__main__", alter_sys=True)
     assert info.value.code == seed_cli.EXIT_PROD_FORBIDDEN
     assert "APP_ENV=prod" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("dev_env")
+@pytest.mark.parametrize("mode", ["single", "scaled"])
+def test_foreign_tenants_refusal_is_same_in_both_modes(
+    mode: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """E-10 (NFR-2): отказ AC-1 не зависит от ``APP_MODE``; Redis сиду не нужен (адрес фиктивный)."""
+    monkeypatch.setenv("APP_MODE", mode)
+    monkeypatch.setenv("REDIS_URL", f"redis://:{PASSWORD}@redis.invalid:6379/0")
+    called: list[object] = []
+    monkeypatch.setattr(seed_cli, "ensure_seed_target", _foreign_target)
+    monkeypatch.setattr(seed_cli, "apply_seed", lambda session: called.append(session))
+
+    assert seed_cli.main([]) == seed_cli.EXIT_FORBIDDEN
+    captured = capsys.readouterr()
+    assert captured.err.strip() == FOREIGN_TENANTS_REFUSAL
+    assert PASSWORD not in captured.err
+    assert "redis.invalid" not in captured.err
+    assert called == []

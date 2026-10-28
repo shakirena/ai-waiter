@@ -1,6 +1,6 @@
 # Test Case Traceability Matrix
 
-Обновлено: 2026-10-19. Feature #6 «Каркас проекта» (stories #37–#45, прогон 2026-10-02), feature #7 «Модель данных v1 и миграции Alembic» (stories #48–#54, #56, прогон 2026-10-12, финальный прогон G5 2026-10-13) и feature #8 «Импорт меню из CSV/XLSX» (stories #61–#67, прогон 2026-10-19). Столбец «Авто» — где тест выполняется автоматически (для #7 и #8 пути относительно `backend/tests/`, `db/` — тесты с маркером `db`, нужен PostgreSQL); «Прогон» — результат на дату прогона.
+Обновлено: 2026-10-28. Feature #6 «Каркас проекта» (stories #37–#45, прогон 2026-10-02), feature #7 «Модель данных v1 и миграции Alembic» (stories #48–#54, #56, прогон 2026-10-12, финальный прогон G5 2026-10-13), feature #8 «Импорт меню из CSV/XLSX» (stories #61–#67, прогон 2026-10-19) и защита от демо-данных (story #60, прогон 2026-10-28). Столбец «Авто» — где тест выполняется автоматически (для #7 и #8 пути относительно `backend/tests/`, `db/` — тесты с маркером `db`, нужен PostgreSQL); «Прогон» — результат на дату прогона.
 
 ## Feature #6 — Каркас проекта
 
@@ -217,7 +217,7 @@
 | AC-6 | #66 | TC-66-001, TC-66-003, TC-66-005 | db/test_menu_sync_cli.py::test_ac66_dry_run_then_applied_then_unchanged, ::test_parse_errors_are_rejected_and_journaled, ::test_busy_lock_is_exit_3 |
 | AC-7 | #67 | TC-67-001…TC-67-006 | ручная приёмка (код в репозитории кассы); формат выгрузки в ядре — test_menu_csv.py::test_pos_export_format_from_tz_a2_is_accepted, test_menu_sync_cli.py::test_check_accepts_pos_export_format |
 
-Всего в матрице: 161 TC.
+Всего в матрице на конец #8: 161 TC (с #60 — 171, см. ниже).
 
 ## Cross-reference между историями (#8)
 - #61 → #62 (снимок применяется), #63 (`snapshot_hash`), #64, #65 (разбор файла даёт `MenuSnapshot`)
@@ -225,3 +225,34 @@
 - #64 → #65 (общий `format.py`), #66 (`check`/`import` печатают отчёт), #67 (формат выгрузки)
 - #66 → #67 (проверка выгрузки `check` и `import`)
 - #7: #50 → #62 (таблицы меню, RESTRICT, составные FK); #54 → #63 (инварианты схемы для `menu_sync_runs`); #53 → #63 (после сида журнал пуст)
+
+## Защита от демо-данных в боевой базе — story #60
+
+Прогон 2026-10-28: локально (Windows, PostgreSQL 16, тестовая база `*_test`) `pytest -q tests/test_seed_guard.py tests/test_seed.py tests/db/test_seed.py` — 56 passed, без пропусков; ручной TC-60-010 — PASS. AC-2 и E-7…E-9 относятся к #71 и здесь не учитываются.
+
+| TC ID | Title | Feature | AC | Priority | E2E Automated | Авто (unit/static) | Прогон |
+|-------|-------|---------|-----|----------|---------------|--------------------|--------|
+| TC-60-001 | Только другое заведение — код 2, демо не создаётся | #60 | AC-1, E-4 | Critical | No | db/test_seed.py::test_cli_refuses_base_with_other_tenant, ::test_guard_on_other_only_base; test_seed.py::test_foreign_tenants_are_refused_with_exit_code_2; test_seed_guard.py | PASS |
+| TC-60-002 | Демо и другое заведение — код 2, демо-строки не обновлены | #60 | AC-1, E-3 | Critical | No | db/test_seed.py::test_cli_refuses_demo_plus_other_without_updating_demo, ::test_guard_on_demo_and_other_base | PASS |
+| TC-60-003 | Пустая база — сид загружает данные, код 0 | #60 | E-1, FR-2 | High | No | db/test_seed.py::test_guard_on_empty_base, ::test_cli_twice_commits_same_data; test_seed_guard.py | PASS |
+| TC-60-004 | Только демо — повторный запуск идемпотентен | #60 | E-2, FR-2 | High | No | db/test_seed.py::test_guard_on_demo_only_base, ::test_cli_twice_commits_same_data, ::test_seed_twice_gives_same_row_counts | PASS |
+| TC-60-005 | APP_ENV=prod — отказ до подключения, проверка не выполняется | #60 | E-5, FR-2 | Critical | No | test_seed.py::test_prod_refusal_happens_before_target_check, ::test_exit_prod_forbidden_is_alias_of_exit_forbidden | PASS |
+| TC-60-006 | Ошибка БД при проверке — код 1 без пароля | #60 | E-6, NFR-1 | High | No | test_seed.py::test_database_error_in_target_check_is_exit_1_without_password; test_seed_guard.py::test_database_error_is_not_caught; db/test_seed.py::test_cli_without_schema_fails_with_hint, ::test_cli_wrong_password_is_not_shown | PASS (известное ограничение NFR-1: `describe_error` маскирует только пароль, LOW с #7) |
+| TC-60-007 | Сообщение отказа без строки подключения, идентификаторов и названий | #60 | AC-1, NFR-1 | Critical | No | test_seed_guard.py::test_refusal_text_is_russian_without_connection_details; test_seed.py::test_foreign_tenants_are_refused_with_exit_code_2; db/test_seed.py | PASS |
+| TC-60-008 | Проверка — первый запрос транзакции, загрузчик не вызывается | #60 | FR-1, NFR-4 | High | No | test_seed.py::test_target_check_runs_before_apply_seed_in_same_session; test_seed_guard.py::test_foreign_tenants_exist_query | PASS |
+| TC-60-009 | Одинаково в single/scaled, Windows/Linux | #60 | E-10, NFR-2 | Medium | No | test_seed.py::test_foreign_tenants_refusal_is_same_in_both_modes; test_seed_guard.py, test_seed.py (матрица CI); db/test_seed.py (backend-services) | PASS (локально Windows; Linux — по CI PR) |
+| TC-60-010 | Ручной: сид с --database-url базы с другим заведением (Windows, single) | #60 | AC-1, E-4, E-6, E-10 | Critical | No | — (ручной) | PASS (ручной, 2026-10-28) |
+
+Итого по #60: 10 TC (PASS 10, из них ручной 1 — TC-60-010).
+
+### AC → TC → автотест (#60)
+
+| AC | Story | TC | Автотест |
+|----|-------|----|----------|
+| AC-1 | #60 | TC-60-001, TC-60-002, TC-60-007, TC-60-010 | db/test_seed.py::test_cli_refuses_base_with_other_tenant, ::test_cli_refuses_demo_plus_other_without_updating_demo; test_seed.py::test_foreign_tenants_are_refused_with_exit_code_2; test_seed_guard.py::test_refusal_text_is_russian_without_connection_details |
+
+Всего в матрице: 171 TC.
+
+## Cross-reference между историями (#60)
+- #53 → #60: TC-53-003 (отказ при `APP_ENV=prod`) сохраняется — TC-60-005; замечание security review #53 из Notes TC-53-003 закрыто TC-60-001, TC-60-002, TC-60-010; идемпотентность TC-53-002 — TC-60-004; ошибки запуска TC-53-005 — TC-60-006
+- #60 ↔ #71: независимые проверки (сид смотрит на целевую базу; приложение в prod сообщает о неготовности); гонку сида (ADR-60.1) ловит #71

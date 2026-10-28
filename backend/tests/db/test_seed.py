@@ -284,9 +284,12 @@ def test_cli_twice_commits_same_data(committed_seed: str, capsys: pytest.Capture
 
 
 def test_cli_without_schema_fails_with_hint(committed_seed: str, capsys: pytest.CaptureFixture[str]) -> None:
+    """E-6 (#60): таблицы ``tenants`` нет — ошибка уже на запросе проверки, код 1, а не отказ 2."""
     reset_schema(committed_seed)
     assert seed_cli.main(["--database-url", committed_seed]) == 1
-    assert "alembic upgrade head" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "alembic upgrade head" in err
+    assert FOREIGN_TENANTS_REFUSAL not in err
 
 
 def test_cli_wrong_password_is_not_shown(committed_seed: str, capsys: pytest.CaptureFixture[str]) -> None:
@@ -335,11 +338,16 @@ async def test_guard_on_other_only_base(db_session: AsyncSession) -> None:
         await ensure_seed_target(db_session)
 
 
-async def _commit_other_tenant(database_url: str) -> None:
+OTHER_TENANT_NAME = "Другое заведение"
+
+
+async def _commit_other_tenant(database_url: str) -> str:
+    """Зафиксировать «реальное» заведение; вернуть его ``id`` строкой (для проверки текста отказа)."""
     engine = create_async_engine(database_url, poolclass=NullPool)
     try:
         async with AsyncSession(engine) as session, session.begin():
-            await create_tenant(session, name="Другое заведение")
+            tenant = await create_tenant(session, name=OTHER_TENANT_NAME)
+            return str(tenant.id)
     finally:
         await engine.dispose()
 
@@ -363,24 +371,30 @@ async def _committed_updated_at(database_url: str) -> dict[str, list[object]]:
         await engine.dispose()
 
 
-def _assert_refused(url: str, capsys: pytest.CaptureFixture[str]) -> None:
+def _assert_refused(url: str, capsys: pytest.CaptureFixture[str], other_tenant_id: str) -> None:
+    """Код 2, в stderr только текст отказа: ни строки подключения (пароль, хост, база, пользователь),
+    ни идентификатора и названия найденного заведения (AC-1, NFR-1)."""
     assert seed_cli.main(["--database-url", url]) == seed_cli.EXIT_FORBIDDEN == 2
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert FOREIGN_TENANTS_REFUSAL in captured.err
-    password = make_url(url).password
-    if password:
-        assert password not in captured.err
+    assert captured.err.strip() == FOREIGN_TENANTS_REFUSAL
+    parsed = make_url(url)
+    for secret in (parsed.password, parsed.host, parsed.database, parsed.username):
+        if secret:
+            assert str(secret) not in captured.err
+    assert "postgresql" not in captured.err
+    assert other_tenant_id not in captured.err
+    assert OTHER_TENANT_NAME not in captured.err
 
 
 def test_cli_refuses_base_with_other_tenant(committed_seed: str, capsys: pytest.CaptureFixture[str]) -> None:
     """AC-1, E-4: в базе только другое заведение — код 2, число строк не изменилось, демо нет."""
     url = committed_seed
-    run_in_thread(lambda: asyncio.run(_commit_other_tenant(url)))
+    other_id = run_in_thread(lambda: asyncio.run(_commit_other_tenant(url)))
     before = run_in_thread(lambda: asyncio.run(_committed_counts(url)))
     assert before["tenants"] == 1
 
-    _assert_refused(url, capsys)
+    _assert_refused(url, capsys, other_id)
 
     after = run_in_thread(lambda: asyncio.run(_committed_counts(url)))
     assert after == before
@@ -403,12 +417,12 @@ def test_cli_refuses_demo_plus_other_without_updating_demo(
     url = committed_seed
     assert seed_cli.main(["--database-url", url]) == 0
     capsys.readouterr()
-    run_in_thread(lambda: asyncio.run(_commit_other_tenant(url)))
+    other_id = run_in_thread(lambda: asyncio.run(_commit_other_tenant(url)))
     counts_before = run_in_thread(lambda: asyncio.run(_committed_counts(url)))
     stamps_before = run_in_thread(lambda: asyncio.run(_committed_updated_at(url)))
     assert stamps_before["tenants"]
 
-    _assert_refused(url, capsys)
+    _assert_refused(url, capsys, other_id)
 
     assert run_in_thread(lambda: asyncio.run(_committed_counts(url))) == counts_before
     assert run_in_thread(lambda: asyncio.run(_committed_updated_at(url))) == stamps_before

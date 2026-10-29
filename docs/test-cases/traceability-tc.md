@@ -1,6 +1,6 @@
 # Test Case Traceability Matrix
 
-Обновлено: 2026-10-28. Feature #6 «Каркас проекта» (stories #37–#45, прогон 2026-10-02), feature #7 «Модель данных v1 и миграции Alembic» (stories #48–#54, #56, прогон 2026-10-12, финальный прогон G5 2026-10-13), feature #8 «Импорт меню из CSV/XLSX» (stories #61–#67, прогон 2026-10-19) и защита от демо-данных (story #60, прогон 2026-10-28). Столбец «Авто» — где тест выполняется автоматически (для #7 и #8 пути относительно `backend/tests/`, `db/` — тесты с маркером `db`, нужен PostgreSQL); «Прогон» — результат на дату прогона.
+Обновлено: 2026-10-29. Feature #6 «Каркас проекта» (stories #37–#45, прогон 2026-10-02), feature #7 «Модель данных v1 и миграции Alembic» (stories #48–#54, #56, прогон 2026-10-12, финальный прогон G5 2026-10-13), feature #8 «Импорт меню из CSV/XLSX» (stories #61–#67, прогон 2026-10-19) и защита от демо-данных (story #60, прогон 2026-10-28; story #71, прогон 2026-10-29). Столбец «Авто» — где тест выполняется автоматически (для #7 и #8 пути относительно `backend/tests/`, `db/` — тесты с маркером `db`, нужен PostgreSQL); «Прогон» — результат на дату прогона.
 
 ## Feature #6 — Каркас проекта
 
@@ -256,3 +256,39 @@
 ## Cross-reference между историями (#60)
 - #53 → #60: TC-53-003 (отказ при `APP_ENV=prod`) сохраняется — TC-60-005; замечание security review #53 из Notes TC-53-003 закрыто TC-60-001, TC-60-002, TC-60-010; идемпотентность TC-53-002 — TC-60-004; ошибки запуска TC-53-005 — TC-60-006
 - #60 ↔ #71: независимые проверки (сид смотрит на целевую базу; приложение в prod сообщает о неготовности); гонку сида (ADR-60.1) ловит #71
+
+## Неготовность приложения в prod при демо-заведении — story #71
+
+Прогон 2026-10-29: локально (Windows, PostgreSQL 16, тестовая база `*_test`) `uv run pytest -q tests/test_demo_data.py tests/test_health.py tests/test_lifespan.py tests/db/test_health_db.py` — 67 passed, без пропусков; ручной TC-71-014 не выполнен. Полные списки тестов — в `docs/test-cases/feature-71-demo-data-readiness.md`.
+
+| TC ID | Title | Feature | AC | Priority | E2E Automated | Авто (unit/static) | Прогон |
+|-------|-------|---------|-----|----------|---------------|--------------------|--------|
+| TC-71-001 | prod и демо в базе — 503 not_ready, WARNING без строки подключения | #71 | AC-2, FR-3 | Critical | No | db/test_health_db.py::test_prod_with_demo_tenant_is_503_and_warns; test_health.py::test_prod_demo_found_is_503_with_unchanged_body | PASS |
+| TC-71-002 | Тело и OpenAPI не раскрывают демо, ключа demo_data нет | #71 | AC-2, ADR-60.3 | Critical | No | test_health.py::test_prod_openapi_has_no_demo_key, ::test_prod_demo_found_is_503_with_unchanged_body, ::test_prod_demo_check_failed_is_503 | PASS |
+| TC-71-003 | Лог без строки подключения, пароля и traceback | #71 | AC-2, NFR-1 | High | No | test_demo_data.py::test_log_texts_have_no_connection_details, ::test_exception_is_unknown_with_masked_password; test_health.py::test_check_database_exception_logged_masked_without_traceback, ::test_ready_returns_503_without_details_when_check_fails | PASS (ограничение NFR-1: `describe_error` маскирует только пароль, #73) |
+| TC-71-004 | dev/test — проверка не выполняется | #71 | E-7, FR-4 | High | No | test_health.py::test_demo_check_not_called_outside_prod; test_lifespan.py::test_lifespan_outside_prod_does_not_refresh | PASS |
+| TC-71-005 | prod без демо — готовность по прежним проверкам | #71 | E-4, E-8 | High | No | db/test_health_db.py::test_prod_without_demo_tenant_is_ready; test_health.py::test_prod_without_demo_is_ready | PASS |
+| TC-71-006 | prod, база недоступна — 503 из-за database | #71 | E-9, NFR-5 | Critical | No | test_health.py::test_prod_database_down_is_503_regardless_of_demo; test_lifespan.py::test_lifespan_in_prod_survives_failed_check; db/test_health_db.py::test_prod_with_unreachable_database_is_503_and_demo_warning_is_masked | PASS |
+| TC-71-007 | Ошибка/таймаут проверки — «неизвестно», 503 при database: ok | #71 | NFR-5, E-9 | Critical | No | test_health.py::test_prod_demo_check_failed_is_503, ::test_prod_demo_check_timeout_is_503; test_demo_data.py; db/test_health_db.py::test_prod_without_schema_is_503_with_database_ok | PASS |
+| TC-71-008 | Демо удалено между опросами — 200 и INFO | #71 | ADR-60.2, FR-3 | High | No | db/test_health_db.py::test_prod_demo_removed_between_polls_becomes_ready; test_demo_data.py::test_found_then_absent_logs_info | PASS |
+| TC-71-009 | Лог только при смене состояния | #71 | ADR-60.2, NFR-6 | Medium | No | test_health.py::test_prod_demo_warning_logged_once_for_repeated_polls; test_demo_data.py | PASS |
+| TC-71-010 | Проверка при старте в prod, сбой не прерывает старт | #71 | ADR-60.2, E-9 | High | No | test_lifespan.py::test_lifespan_in_prod_refreshes_once_with_container_database, ::test_lifespan_in_prod_survives_failed_check, ::test_create_app_creates_demo_data_monitor | PASS |
+| TC-71-011 | Проверка параллельно с ping-ами, таймаут 2 с | #71 | NFR-4 | Medium | No | test_health.py::test_prod_demo_check_runs_concurrently_with_pings, ::test_prod_demo_check_timeout_is_503 | PASS |
+| TC-71-012 | prod, демо и боевое заведение — 503 и WARNING | #71 | E-3, AC-2 | High | No | db/test_health_db.py::test_prod_with_demo_and_real_tenant_is_503_and_warns; db/test_seed.py::test_guard_on_demo_and_other_base; test_health.py::test_prod_demo_found_is_503_with_unchanged_body | PASS |
+| TC-71-013 | Одинаково в single/scaled, Windows/Linux | #71 | E-10, NFR-2 | Medium | No | test_health.py (параметры single/scaled, матрица CI); db/test_health_db.py (backend-services) | PASS (локально Windows; Linux — по CI PR #72) |
+| TC-71-014 | Ручной: prod на Windows (single) с демо — лог и /health/ready | #71 | AC-2, E-8, E-10 | High | No | — (ручной) | НЕ ВЫПОЛНЕН |
+
+Итого по #71: 14 TC (PASS 13; не выполнен 1 — TC-71-014, ручной).
+
+### AC → TC → автотест (#71)
+
+| AC | Story | TC | Автотест |
+|----|-------|----|----------|
+| AC-2 | #71 | TC-71-001, TC-71-002, TC-71-003, TC-71-012, TC-71-014 | db/test_health_db.py::test_prod_with_demo_tenant_is_503_and_warns; test_health.py::test_prod_demo_found_is_503_with_unchanged_body, ::test_prod_openapi_has_no_demo_key; test_demo_data.py::test_log_texts_have_no_connection_details |
+
+Всего в матрице: 185 TC.
+
+## Cross-reference между историями (#71)
+- #60 → #71: гонка сида (ADR-60.1, Notes TC-60-008) обнаруживается TC-71-001, TC-71-012; E-3 и E-4 — сид в TC-60-002, TC-60-001, приложение в TC-71-012, TC-71-005
+- #56 → #71: проверка `database` и таймаут 2 с (TC-56-001…TC-56-003) — регрессия в TC-71-006, TC-71-011; запись ошибок `_check` без traceback — TC-71-003
+- #37 → #71: TC-37-005 (Redis в `/health/ready`) — ошибка Redis в логе теперь только именами классов (TC-71-003)

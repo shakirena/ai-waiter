@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 import app.core.container as container_module
-from app.api.demo_data import DEMO_FOUND_WARNING, DEMO_GONE_INFO
+from app.api.demo_data import DEMO_CHECK_FAILED, DEMO_FOUND_WARNING, DEMO_GONE_INFO
 from app.core.config import Settings
 from app.core.scheduler import TaskRegistry
 from app.db.session import Database
@@ -111,7 +111,7 @@ async def test_prod_with_demo_tenant_is_503_and_warns(
 async def test_prod_without_demo_tenant_is_ready(
     committed_database: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """E-10: prod, в базе только «чужое» (боевое) заведение — 200, записей о демо нет."""
+    """E-4: prod, в базе только «чужое» (боевое) заведение — 200, записей о демо нет."""
     async with _committed_session(committed_database) as session:
         session.add(Tenant(name="Боевое заведение"))
         await session.commit()
@@ -168,3 +168,39 @@ async def test_prod_without_schema_is_503_with_database_ok(
     assert record.exc_info is None
     if password:
         assert password not in record.getMessage()
+
+
+async def test_prod_with_demo_and_real_tenant_is_503_and_warns(
+    committed_database: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """E-3: в базе демо-заведение и боевое — боевое не «перекрывает» демо: 503 и один WARNING."""
+    async with _committed_session(committed_database) as session:
+        session.add(Tenant(name="Боевое заведение"))
+        session.add(Tenant(id=DEMO_TENANT_ID, name="Demo Restoran"))
+        await session.commit()
+
+    with caplog.at_level(logging.INFO, logger="app.api.demo_data"):
+        r = await _ready(make_settings(database_url=committed_database, **PROD), monkeypatch)
+    assert r.status_code == 503
+    assert r.json() == {"status": "not_ready", "checks": {"database": "ok", "redis": "skipped"}}
+    assert [(rec.levelno, rec.getMessage()) for rec in _demo_records(caplog)] == [(logging.WARNING, DEMO_FOUND_WARNING)]
+
+
+async def test_prod_with_unreachable_database_is_503_and_demo_warning_is_masked(
+    migrated_database: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """E-9 + NFR-1: prod, неверный пароль — 503 из-за ``database``; проверка демо → WARNING
+    «проверка не выполнена» (не «демо нет»), без пароля и traceback, один раз на lifespan и запрос."""
+    wrong_password = "wrong-pw-71-q9"  # заведомо неверный пароль
+    url = make_url(migrated_database).set(password=wrong_password, database="missing_db_71_test")
+    settings = make_settings(database_url=url.render_as_string(hide_password=False), **PROD)
+    with caplog.at_level(logging.INFO, logger="app.api.demo_data"):
+        r = await _ready(settings, monkeypatch)
+    assert r.status_code == 503
+    assert r.json() == {"status": "not_ready", "checks": {"database": "fail", "redis": "skipped"}}
+    assert wrong_password not in r.text
+    [record] = _demo_records(caplog)  # повторное UNKNOWN на запросе не пишется
+    assert record.levelno == logging.WARNING
+    assert record.getMessage().startswith(DEMO_CHECK_FAILED.split("%s")[0])
+    assert record.exc_info is None
+    assert wrong_password not in record.getMessage()

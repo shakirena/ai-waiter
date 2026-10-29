@@ -6,19 +6,19 @@
 
 ## Ready for Dev
 
-- #71 (выделено из #60: `/health/ready` 503 в prod при демо-заведении, AC-2) — kanban:ready-for-dev, G2 PASS 2026-10-25, size:s. Spec: docs/specs/feature-60-demo-data-guard.md; arch: docs/arch/feature-60-demo-data-guard.md (ADR-60.2, ADR-60.3, DEC-014); заглушка: backend/app/api/demo_data.py. `app.seed.guard.demo_tenant_exists` уже реализована в рамках #60.
-  - Тело `/health/ready` без ключа для демо (ADR-60.3) подтверждено пользователем 2026-10-26.
-  - Для developer/security #71: `app/api/health.py::_check` логирует `exc_info=True` (INFO из security review #60, код #56) — traceback без маскирования может содержать DSN; решить в #71 или отдельным bug.
-  - Для #71: WARNING `DEMO_CHECK_FAILED` идёт через `describe_error`, который маскирует только пароль (см. LOW ниже).
-  - Рекомендация для анализа #9 (комментарий в issue): в prod отклонять вход по токенам демо-заведения.
+*(пусто)*
 
 ## In Development (WIP: 0/5)
 
 *(пусто)*
 
-## In Testing (WIP: 0/5)
+## In Testing (WIP: 1/5)
 
-*(пусто)*
+- #71 (выделено из #60: `/health/ready` 503 в prod при демо-заведении, AC-2) — kanban:testing, security:passed, G4 PASS 2026-10-29, size:s. Код: коммит c2332c2 (backend/app/api/demo_data.py, deps.py, health.py, main.py; docstring app/seed/guard.py), security review — 1725f49; ветка feature/60-demo-seed-guard, PR #72. Build: ruff OK, unit 1448 passed, db 284 passed. Spec: docs/specs/feature-60-demo-data-guard.md (AC-2, FR-3, FR-4, NFR-1…NFR-6, E-7…E-10); arch: docs/arch/feature-60-demo-data-guard.md («Реализация #71»). Doc-sync после G4 выполнен 2026-10-29.
+  - Для G5: TC-документ #71 (AC-2, E-7…E-9; случаи из arch «Для TC»: удаление демо без перезапуска → 200 + INFO, повторные опросы → один WARNING, БД недоступна при старте → `/health` 200, проверка не выполнена при `database` ok → 503); WARNING о демо в логе идёт после «Приложение запущено».
+  - `_check` больше не пишет traceback (закрыт INFO security review #60): БД — `describe_error`, Redis — имена классов.
+  - Security LOW: публичный `/health/ready` без rate-limit, в prod два соединения на запрос — закрыть путь в Caddy или `RateLimiter` отдельной задачей. INFO: маскирование host/user — #73.
+  - Рекомендация для анализа #9 (комментарий в issue): в prod отклонять вход по токенам демо-заведения.
 
 ## Ready to Deploy (#60)
 
@@ -33,6 +33,7 @@
 
 ## Backlog
 
+- #73 (bug, security, priority:medium) — `Database.describe_error` не скрывает хост, порт и пользователя из `DATABASE_URL` (LOW из security review #60/#71; затрагивает stderr сида, `DEMO_CHECK_FAILED`, `_check` компонента `database`).
 - #70 (bug, #63/#66, NFR-8 spec #8) — итог синхронизации меню не пишется в структурированный лог; фиксируется только строкой `menu_sync_runs`. Не блокирует G5.
 
 ## Ready to Deploy (группа feature #6)

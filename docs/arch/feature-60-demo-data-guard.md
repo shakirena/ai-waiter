@@ -173,8 +173,8 @@
 ## Security
 
 - **Утечка секретов (NFR-1).** Ни сообщения CLI, ни лог, ни тело `/health/ready` не содержат строки подключения, хоста, порта и пароля. Ошибки БД выводятся только через `Database.describe_error`. Сообщение сида не раскрывает число, id и названия чужих заведений. В логе #71 допустимо упоминать демо-заведение: его id и токены и так публичны.
-  - **Известное ограничение (security review #60, LOW, существует с #7).** `describe_error` маскирует только пароль. Хост, порт и имя пользователя из текста ошибки драйвера (например, `Connect call failed ('<host>', 5432)`) могут попасть в stderr сида (код 1) и в WARNING `DEMO_CHECK_FAILED` (#71). Тексты, которые формирует сама фича (`PROD_REFUSAL`, `FOREIGN_TENANTS_REFUSAL`, `DEMO_FOUND_WARNING`, тело `/health/ready`), деталей подключения не содержат. Устранение — доработка `describe_error` отдельной задачей, вне #60.
-  - **`exc_info=True` в `app/api/health.py::_check` (INFO, существующий код #56).** Traceback исключения ping пишется в лог без маскирования и может содержать DSN. Проверить и решить при реализации #71 или отдельным bug; в `DemoDataMonitor` `exc_info` не используется (раздел «Логирование»).
+  - **Известное ограничение (security review #60, LOW, существует с #7).** `describe_error` маскирует только пароль. Хост, порт и имя пользователя из текста ошибки драйвера (например, `Connect call failed ('<host>', 5432)`) могут попасть в stderr сида (код 1) и в WARNING `DEMO_CHECK_FAILED` (#71). Тексты, которые формирует сама фича (`PROD_REFUSAL`, `FOREIGN_TENANTS_REFUSAL`, `DEMO_FOUND_WARNING`, тело `/health/ready`), деталей подключения не содержат. Устранение — доработка `describe_error` отдельной задачей, вне #60: bug #73 (backlog). С #71 то же ограничение относится и к WARNING `_check` компонента `database`.
+  - ~~**`exc_info=True` в `app/api/health.py::_check` (INFO, существующий код #56).**~~ **Закрыто в #71 (коммит c2332c2).** `_check(component, ping, describe_error)` пишет WARNING без traceback (`exc_info` не передаётся): для `database` текст ошибки — через `Database.describe_error` (пароль → `***`; ограничение по хосту/порту — см. пункт выше, bug #73), для `event_bus`/`rate_limiter` (Redis) — только имена классов исключений по цепочке `__cause__`/`__context__` (`_exception_names`), без сообщений клиента Redis, где может быть URL с паролем. Тесты: `test_check_database_exception_logged_masked_without_traceback`, `test_exception_names_follow_cause_chain_without_messages`, `test_ready_returns_503_without_details_when_check_fails` (`exc_info is None`). В `DemoDataMonitor` `exc_info` также не используется (раздел «Логирование»).
 - **Раскрытие информации.** Ключа `demo_data` в публичном теле нет (ADR-60.3).
 - **Нагрузка.** `/health/ready` публичный и без rate-limit (как сейчас). В prod каждый запрос — два коротких запроса к БД с таймаутом 2 с. Флуд упирается в пул (10 соединений) и мешает остальным запросам так же, как и сейчас с `SELECT 1`. Порядок величины не меняется (см. «Риски»).
 - **Мультиарендность.** Запросы читают `tenants` без фильтра по `tenant_id` — это осознанно: проверка платформенная, а не в контексте заведения. `tenants` — корневая таблица без `tenant_id` (DEC-010). Данные заведений наружу не выходят: результат — один бит, и он остаётся в процессе.
@@ -185,6 +185,7 @@
 
 - Сид пишет только в stdout/stderr (как сейчас), логгер не настраивает.
 - `app.api.demo_data`: WARNING/INFO только при смене состояния (ADR-60.2, п. 4), `extra={"component": "demo_data"}`, формат — общий JSON-лог (`configure_logging`, NFR-6). `exc_info` не передаётся: traceback asyncpg может содержать DSN. Текст ошибки — только через `describe_error`.
+- `app.api.health` (`_check`, с #71): WARNING `Проверка готовности: ошибка: %s` с `extra={"component": ...}`, без `exc_info`; для `database` — `Database.describe_error`, для Redis — `_exception_names` (только классы исключений). Таймаут и `False` — прежние тексты без деталей.
 
 ---
 
@@ -244,15 +245,16 @@ backend/app/seed/guard.py          # #60 РЕАЛИЗОВАН: FOREIGN_TENANTS_R
 backend/app/seed/__main__.py       # #60 РЕАЛИЗОВАН: _run вызывает ensure_seed_target; main ловит ForeignTenantsError → 2;
                                    #   EXIT_FORBIDDEN = 2 (EXIT_PROD_FORBIDDEN — алиас); docstring кодов
 backend/app/seed/__init__.py       # #60 РЕАЛИЗОВАН: строка про проверку целевой базы
-backend/app/api/demo_data.py       # СОЗДАН (stub): DemoDataState, DemoDataMonitor(check_timeout).refresh/_transition,
-                                   #   DEMO_FOUND_WARNING, DEMO_CHECK_FAILED, DEMO_GONE_INFO
-backend/app/api/deps.py            # #71: get_demo_data_monitor(request) -> DemoDataMonitor
-backend/app/api/health.py          # #71: в prod — monitor.refresh в gather; FOUND/UNKNOWN → 503; контракт тела прежний
-backend/app/main.py                # #71: create_app → app.state.demo_data_monitor = DemoDataMonitor(READINESS_CHECK_TIMEOUT);
+backend/app/api/demo_data.py       # #71 РЕАЛИЗОВАН: DemoDataState, DemoDataMonitor(check_timeout).refresh/_transition,
+                                   #   DEMO_FOUND_WARNING, DEMO_CHECK_FAILED, DEMO_GONE_INFO, DEMO_CHECK_TIMEOUT_TEXT
+backend/app/api/deps.py            # #71 РЕАЛИЗОВАН: get_demo_data_monitor(request) -> DemoDataMonitor
+backend/app/api/health.py          # #71 РЕАЛИЗОВАН: в prod — monitor.refresh в gather; FOUND/UNKNOWN → 503; контракт тела прежний;
+                                   #   _check без traceback (describe_error / _exception_names)
+backend/app/main.py                # #71 РЕАЛИЗОВАН: create_app → app.state.demo_data_monitor = DemoDataMonitor(READINESS_CHECK_TIMEOUT);
                                    #   lifespan: в prod после start_container — await monitor.refresh(container.database)
 ```
 
-Состояние на 2026-10-26: #60 реализован (коммит 4ff4749, G4 PASS, security:passed); заглушка `app/api/demo_data.py` (#71) к коду не подключена, `deps.py`, `health.py`, `main.py` не менялись. Frontend не затронут.
+Состояние на 2026-10-29: #60 реализован (коммит 4ff4749, G5 PASS 2026-10-28, ready-to-deploy); #71 реализован (коммит c2332c2, G4 PASS, security:passed — 1725f49), story в testing. Схема БД, миграции, env и frontend не затронуты.
 
 ### Реализация #60 — файлы и тесты (doc-sync после G4, дополнено после G5)
 
@@ -270,6 +272,33 @@ backend/app/main.py                # #71: create_app → app.state.demo_data_mon
 
 TC: `docs/test-cases/feature-60-demo-seed-guard.md` (TC-60-001…TC-60-010, G5 PASS 2026-10-28; ручной TC-60-010).
 
+### Реализация #71 — файлы и тесты (doc-sync после G4)
+
+Коммит c2332c2, ветка feature/60-demo-seed-guard (PR #72). Build: ruff OK, unit 1448 passed, db 284 passed. Security review — PASS (1725f49): LOW 1, INFO 4.
+
+| Файл | Что сделано |
+|---|---|
+| `app/api/demo_data.py` | `DemoDataMonitor.refresh`: `database.session()` + `demo_tenant_exists` под `asyncio.timeout(check_timeout)`; свой таймаут → `DEMO_CHECK_TIMEOUT_TEXT`, иное исключение → `describe_error`; `CancelledError` не перехватывается. `_transition` — запись только при смене состояния (таблица ADR-60.2, п. 4), без `exc_info`, `component="demo_data"`, возвращает новое состояние |
+| `app/api/deps.py` | `get_demo_data_monitor(request)` → `request.app.state.demo_data_monitor` |
+| `app/api/health.py` | `ready`: при `APP_ENV=prod` `monitor.refresh(database)` в общем `gather` с ping-ами, вне prod — `_no_demo_check()` (FR-4); не `ABSENT` → 503 с прежним телом (ADR-60.3). `_check(component, ping, describe_error)` — без traceback: `database` — `Database.describe_error`, Redis — `_exception_names` |
+| `app/main.py` | `create_app` → `app.state.demo_data_monitor = DemoDataMonitor(health.READINESS_CHECK_TIMEOUT)`; lifespan при `APP_ENV=prod` — один `refresh(container.database)` после `start_container` |
+| `app/seed/guard.py` | только docstring `foreign_tenants_exist`: #71 гонку не закрывает, а обнаруживает её последствие |
+
+| Тест (относительно `backend/`) | Что проверяет |
+|---|---|
+| `tests/test_demo_data.py` (новый) | начальное состояние `None`; `FOUND` → один WARNING, повтор без записи; `FOUND` → `ABSENT` — INFO; первое `ABSENT` и `UNKNOWN` → `ABSENT` — без записи; `UNKNOWN` → `FOUND` — WARNING; исключение и ошибка сессии → `UNKNOWN` с `***`; свой таймаут и `TimeoutError` драйвера; `CancelledError` пробрасывается; сессия закрывается; тексты лога без деталей подключения |
+| `tests/test_health.py` | prod: `FOUND`/`UNKNOWN`/таймаут → 503, тело ровно прежнее (`single`/`scaled`); `ABSENT` → 200; БД недоступна → 503 (E-9); вне prod проверка не вызывается (`dev`/`test` × `single`/`scaled`); один WARNING при повторных опросах; параллельность с ping-ами; OpenAPI без ключа демо; `_check` без traceback и пароля; `_exception_names`; прежний тест ошибки Redis — `exc_info is None` |
+| `tests/test_lifespan.py` | монитор создаётся в `create_app`; `get_demo_data_monitor`; в prod `refresh` один раз с `container.database`; сбой проверки не роняет старт; вне prod не вызывается |
+| `tests/db/test_health_db.py` | AC-2: сид + prod → 503 + WARNING без пароля; prod без демо → 200 (E-8); демо удалено между опросами → 200 + INFO; нет схемы → 503 при `database: "ok"` (NFR-5) |
+| `tests/doubles.py` | `FakeDatabase.describe_error` |
+
+**Отклонения от плана (сообщил developer, приняты на G4):**
+1. Docstring эндпоинта `ready` не менялся: он попадает в OpenAPI (описание операции), а ADR-60.3 требует неизменного контракта. Пояснение про #71 — комментарием в теле функции.
+2. `TimeoutError` драйвера отличается от собственного таймаута проверки через `deadline.expired()`: свой таймаут → `DEMO_CHECK_TIMEOUT_TEXT`, `TimeoutError` от драйвера при неистёкшем таймауте → текст через `describe_error`. В обоих случаях состояние `UNKNOWN`.
+3. `refresh` в lifespan вызывается внутри `try` перед `yield` (при отмене старта `CancelledError` контейнер всё равно останавливается в `finally`). Поэтому WARNING о демо-заведении в логе идёт **после** строки «Приложение запущено», а не до неё.
+
+TC #71 — в G5 (отдельный TC-документ; случаи для test-case-writer — раздел «Истории — файлы, тесты, порядок»).
+
 ---
 
 ## Истории — файлы, тесты, порядок
@@ -277,7 +306,7 @@ TC: `docs/test-cases/feature-60-demo-seed-guard.md` (TC-60-001…TC-60-010, G5 P
 | Story | Файлы | Тесты |
 |---|---|---|
 | #60 | `app/seed/guard.py` (`foreign_tenants_exist`, `ensure_seed_target`, `ForeignTenantsError`, `FOREIGN_TENANTS_REFUSAL`; `demo_tenant_exists` можно реализовать здесь же — функция в одну строку, а нужна она #71), `app/seed/__main__.py`, `app/seed/__init__.py`, README (раздел про сид — одна фраза: «только пустая база или база с демо») | unit: `tests/test_seed_guard.py`, дополнения `tests/test_seed.py` (включая правку существующих тестов CLI, см. «Тестовая стратегия»). db: дополнения `tests/db/test_seed.py` |
-| #71 | `app/api/demo_data.py`, `app/api/deps.py`, `app/api/health.py`, `app/main.py`; `app/seed/guard.py:demo_tenant_exists`, если её не сделал #60 | unit: `tests/test_demo_data.py`, дополнения `tests/test_health.py`, `tests/test_lifespan.py`/`tests/test_main.py`. db: дополнения `tests/db/test_health_db.py` |
+| #71 (**реализована**, коммит c2332c2, G4 PASS 2026-10-29, security:passed; см. «Реализация #71») | `app/api/demo_data.py`, `app/api/deps.py`, `app/api/health.py`, `app/main.py`; `app/seed/guard.py:demo_tenant_exists` — сделана в #60 (в #71 только docstring `foreign_tenants_exist`) | unit: `tests/test_demo_data.py`, дополнения `tests/test_health.py`, `tests/test_lifespan.py` (`tests/test_main.py` не понадобился). db: дополнения `tests/db/test_health_db.py` |
 
 **Порядок.** Независимы. Общий файл — только `app/seed/guard.py`: обе заглушки уже в нём, поэтому конфликтов при параллельной работе нет, каждая story заполняет свои функции. Если story идут последовательно, удобнее #60 → #71: #71 переиспользует готовый модуль и db-фикстуры.
 
@@ -299,7 +328,8 @@ TC: `docs/test-cases/feature-60-demo-seed-guard.md` (TC-60-001…TC-60-010, G5 P
 | Гонка в сиде (заведение создаётся во время сида) | ADR-60.1: окно меньше секунды, сценарий ручной; последствие ловит #71 |
 | Старт в prod дольше до 2 с, если БД «висит» | Таймаут 2 с; при отказе в соединении — мгновенно; liveness не зависит |
 | Частые опросы `/health/ready` в prod — два запроса к БД на опрос | PK-запрос дешёвый; при необходимости — кэш с TTL в `DemoDataMonitor` без смены контракта |
-| `exc_info` в логе раскрыл бы DSN | В `DemoDataMonitor` — только `describe_error`, без `exc_info` (unit-тест на `***`) |
+| `exc_info` в логе раскрыл бы DSN | В `DemoDataMonitor` — только `describe_error`, без `exc_info` (unit-тест на `***`); в `_check` `/health/ready` `exc_info` убран в #71 (БД — `describe_error`, Redis — `_exception_names`) |
+| **LOW (security review #71).** `/health/ready` публичный и без rate-limit; в prod каждый запрос берёт два соединения из пула (`SELECT 1` и `EXISTS`), частые внешние запросы могут занимать пул `DB_POOL_SIZE + DB_MAX_OVERFLOW = 10` | Отдельной задачей: закрыть путь `/health/ready` снаружи в Caddy (доступ только мониторингу/локально) или повесить на эндпоинт `RateLimiter` (через интерфейс, одинаково в `single`/`scaled`). В #71 не входит |
 
 ---
 

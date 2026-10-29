@@ -37,7 +37,9 @@ class ForeignTenantsError(RuntimeError):
 async def foreign_tenants_exist(session: AsyncSession) -> bool:
     """``SELECT EXISTS (SELECT 1 FROM tenants WHERE id <> DEMO_TENANT_ID)`` (Core ``select(exists()…)``).
 
-    Один запрос, без блокировок (ADR-60.1: READ COMMITTED, гонка закрыта #71). Ошибку БД
+    Один запрос, без блокировок (ADR-60.1: READ COMMITTED). Гонку с параллельной записью
+    заведения проверка не закрывает; #71 лишь обнаруживает её последствие — демо-заведение
+    в prod-базе (readiness 503 и предупреждение в логе). Ошибку БД
     (нет таблицы ``tenants``, нет соединения) не перехватывает — CLI превращает её в код 1."""
     return bool(await session.scalar(select(exists().where(Tenant.id != DEMO_TENANT_ID))))
 

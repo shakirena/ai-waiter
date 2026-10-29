@@ -19,10 +19,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from enum import StrEnum
 
 from app.db.session import Database
+from app.seed.guard import demo_tenant_exists
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,9 @@ DEMO_FOUND_WARNING = (
 )
 DEMO_CHECK_FAILED = "Проверка демо-данных не выполнена, приложение считается неготовым: %s"
 DEMO_GONE_INFO = "Демо-заведение в базе больше не найдено"
+DEMO_CHECK_TIMEOUT_TEXT = "превышен таймаут проверки ({timeout:g} с)"
+
+_EXTRA = {"component": "demo_data"}
 
 
 class DemoDataState(StrEnum):
@@ -56,11 +61,36 @@ class DemoDataMonitor:
     async def refresh(self, database: Database) -> DemoDataState:
         """``database.session()`` + ``app.seed.guard.demo_tenant_exists`` под ``asyncio.timeout(check_timeout)``.
 
-        Исключение или таймаут → ``UNKNOWN`` (текст — через ``database.describe_error``);
-        ``CancelledError`` не перехватывается. Никогда не бросает иное. Обновляет состояние
-        через ``_transition``; возвращает новое состояние."""
-        raise NotImplementedError
+        Исключение или таймаут → ``UNKNOWN`` (текст — через ``database.describe_error``, для
+        таймаута — ``DEMO_CHECK_TIMEOUT_TEXT``); ``CancelledError`` не перехватывается. Никогда
+        не бросает иное. Обновляет состояние через ``_transition``; возвращает новое состояние."""
+        deadline = asyncio.timeout(self._check_timeout)
+        try:
+            async with deadline:
+                async with database.session() as session:
+                    found = await demo_tenant_exists(session)
+        except TimeoutError as exc:
+            # TimeoutError мог прийти и от драйвера (не наш таймаут) — тогда текст драйвера, замаскированный.
+            if deadline.expired():
+                error_text = DEMO_CHECK_TIMEOUT_TEXT.format(timeout=self._check_timeout)
+            else:
+                error_text = database.describe_error(exc)
+            return self._transition(DemoDataState.UNKNOWN, error_text)
+        except Exception as exc:
+            return self._transition(DemoDataState.UNKNOWN, database.describe_error(exc))
+        return self._transition(DemoDataState.FOUND if found else DemoDataState.ABSENT)
 
-    def _transition(self, new: DemoDataState, error_text: str | None = None) -> None:
-        """Сохранить состояние; при смене — запись в лог (см. docstring модуля), extra ``component="demo_data"``."""
-        raise NotImplementedError
+    def _transition(self, new: DemoDataState, error_text: str | None = None) -> DemoDataState:
+        """Сохранить состояние; при смене — запись в лог (см. docstring модуля), extra ``component="demo_data"``.
+
+        Без ``exc_info``: traceback драйвера может содержать строку подключения. Возвращает ``new``."""
+        old, self._state = self._state, new
+        if old is new:
+            return new
+        if new is DemoDataState.FOUND:
+            logger.warning(DEMO_FOUND_WARNING, extra=_EXTRA)
+        elif new is DemoDataState.UNKNOWN:
+            logger.warning(DEMO_CHECK_FAILED, error_text or "причина неизвестна", extra=_EXTRA)
+        elif old is DemoDataState.FOUND:
+            logger.info(DEMO_GONE_INFO, extra=_EXTRA)
+        return new

@@ -51,3 +51,12 @@
 - backend/tests/db/test_health_db.py — AC-2 (сид + prod → 503 + WARNING без пароля), prod без демо → 200, удаление демо между опросами → 200 + INFO, нет схемы → 503 при `database` ok
 
 **Build:** ruff OK · pytest unit 1448 passed · pytest db 284 passed · frontend не затронут
+
+---
+
+## 🔒 Security review (#71)
+
+**Verdict:** PASS (label `security:passed`), коммит c2332c2
+**Файлы:** app/api/demo_data.py, app/api/deps.py, app/api/health.py, app/main.py, app/seed/guard.py (docstring), тесты
+**Findings:** CRITICAL 0 · HIGH 0 · MEDIUM 0 · LOW 1 · INFO 4
+**Заметки:** тело и OpenAPI `/health/ready` прежние, ключа `demo_data` нет; `exc_info` из `_check` убран, БД пишется через `describe_error`, Redis — только имена классов; `CancelledError` не перехватывается; lifespan при недоступной БД не падает; проверка только при `APP_ENV=prod`, отключить нельзя. LOW: публичный `/health/ready` без rate-limit, в prod два соединения на запрос, рекомендуется закрыть путь в Caddy (отдельная задача). INFO: 503 при ok-проверках косвенно выдаёт демо (это следует из AC); маскирование host/user — #73; гонка логов монитора; блокировка демо-токенов — в story гостевого входа.

@@ -272,7 +272,7 @@ backend/app/main.py                # #71 РЕАЛИЗОВАН: create_app → ap
 
 TC: `docs/test-cases/feature-60-demo-seed-guard.md` (TC-60-001…TC-60-010, G5 PASS 2026-10-28; ручной TC-60-010).
 
-### Реализация #71 — файлы и тесты (doc-sync после G4)
+### Реализация #71 — файлы и тесты (doc-sync после G4, дополнено после G5)
 
 Коммит c2332c2, ветка feature/60-demo-seed-guard (PR #72). Build: ruff OK, unit 1448 passed, db 284 passed. Security review — PASS (1725f49): LOW 1, INFO 4.
 
@@ -289,7 +289,7 @@ TC: `docs/test-cases/feature-60-demo-seed-guard.md` (TC-60-001…TC-60-010, G5 P
 | `tests/test_demo_data.py` (новый) | начальное состояние `None`; `FOUND` → один WARNING, повтор без записи; `FOUND` → `ABSENT` — INFO; первое `ABSENT` и `UNKNOWN` → `ABSENT` — без записи; `UNKNOWN` → `FOUND` — WARNING; исключение и ошибка сессии → `UNKNOWN` с `***`; свой таймаут и `TimeoutError` драйвера; `CancelledError` пробрасывается; сессия закрывается; тексты лога без деталей подключения |
 | `tests/test_health.py` | prod: `FOUND`/`UNKNOWN`/таймаут → 503, тело ровно прежнее (`single`/`scaled`); `ABSENT` → 200; БД недоступна → 503 (E-9); вне prod проверка не вызывается (`dev`/`test` × `single`/`scaled`); один WARNING при повторных опросах; параллельность с ping-ами; OpenAPI без ключа демо; `_check` без traceback и пароля; `_exception_names`; прежний тест ошибки Redis — `exc_info is None` |
 | `tests/test_lifespan.py` | монитор создаётся в `create_app`; `get_demo_data_monitor`; в prod `refresh` один раз с `container.database`; сбой проверки не роняет старт; вне prod не вызывается |
-| `tests/db/test_health_db.py` | AC-2: сид + prod → 503 + WARNING без пароля; prod без демо → 200 (E-8); демо удалено между опросами → 200 + INFO; нет схемы → 503 при `database: "ok"` (NFR-5) |
+| `tests/db/test_health_db.py` | AC-2: сид + prod → 503 + WARNING без пароля; prod без демо → 200 (E-4, E-8; в базе только боевое заведение); демо удалено между опросами → 200 + INFO; нет схемы → 503 при `database: "ok"` (NFR-5). G5 (коммит 92affd0): `test_prod_with_demo_and_real_tenant_is_503_and_warns` — демо и боевое заведение → 503, тело прежнее, ровно один WARNING `DEMO_FOUND_WARNING` (E-3); `test_prod_with_unreachable_database_is_503_and_demo_warning_is_masked` — неверный пароль → 503 `database: "fail"`, один WARNING `DEMO_CHECK_FAILED` на lifespan и запрос (повторное `UNKNOWN` не пишется), без пароля в теле и логе, `exc_info is None` (E-9, NFR-1, NFR-5) |
 | `tests/doubles.py` | `FakeDatabase.describe_error` |
 
 **Отклонения от плана (сообщил developer, приняты на G4):**
@@ -297,7 +297,7 @@ TC: `docs/test-cases/feature-60-demo-seed-guard.md` (TC-60-001…TC-60-010, G5 P
 2. `TimeoutError` драйвера отличается от собственного таймаута проверки через `deadline.expired()`: свой таймаут → `DEMO_CHECK_TIMEOUT_TEXT`, `TimeoutError` от драйвера при неистёкшем таймауте → текст через `describe_error`. В обоих случаях состояние `UNKNOWN`.
 3. `refresh` в lifespan вызывается внутри `try` перед `yield` (при отмене старта `CancelledError` контейнер всё равно останавливается в `finally`). Поэтому WARNING о демо-заведении в логе идёт **после** строки «Приложение запущено», а не до неё.
 
-TC #71 — в G5 (отдельный TC-документ; случаи для test-case-writer — раздел «Истории — файлы, тесты, порядок»).
+TC: `docs/test-cases/feature-71-demo-data-readiness.md` (TC-71-001…TC-71-014, G5 PASS 2026-10-29: PASS 13, ручной TC-71-014 не выполнен). Прогон G5: unit 1448 passed, db 286 passed; покрытие `app/api/demo_data.py`, `health.py`, `deps.py`, `app/main.py` — 100% строк и ветвей.
 
 ---
 
@@ -306,7 +306,7 @@ TC #71 — в G5 (отдельный TC-документ; случаи для te
 | Story | Файлы | Тесты |
 |---|---|---|
 | #60 | `app/seed/guard.py` (`foreign_tenants_exist`, `ensure_seed_target`, `ForeignTenantsError`, `FOREIGN_TENANTS_REFUSAL`; `demo_tenant_exists` можно реализовать здесь же — функция в одну строку, а нужна она #71), `app/seed/__main__.py`, `app/seed/__init__.py`, README (раздел про сид — одна фраза: «только пустая база или база с демо») | unit: `tests/test_seed_guard.py`, дополнения `tests/test_seed.py` (включая правку существующих тестов CLI, см. «Тестовая стратегия»). db: дополнения `tests/db/test_seed.py` |
-| #71 (**реализована**, коммит c2332c2, G4 PASS 2026-10-29, security:passed; см. «Реализация #71») | `app/api/demo_data.py`, `app/api/deps.py`, `app/api/health.py`, `app/main.py`; `app/seed/guard.py:demo_tenant_exists` — сделана в #60 (в #71 только docstring `foreign_tenants_exist`) | unit: `tests/test_demo_data.py`, дополнения `tests/test_health.py`, `tests/test_lifespan.py` (`tests/test_main.py` не понадобился). db: дополнения `tests/db/test_health_db.py` |
+| #71 (**реализована**, коммит c2332c2, G4 PASS 2026-10-29, security:passed; G5 PASS 2026-10-29, qa:passed — тесты 92affd0; см. «Реализация #71») | `app/api/demo_data.py`, `app/api/deps.py`, `app/api/health.py`, `app/main.py`; `app/seed/guard.py:demo_tenant_exists` — сделана в #60 (в #71 только docstring `foreign_tenants_exist`) | unit: `tests/test_demo_data.py`, дополнения `tests/test_health.py`, `tests/test_lifespan.py` (`tests/test_main.py` не понадобился). db: дополнения `tests/db/test_health_db.py` |
 
 **Порядок.** Независимы. Общий файл — только `app/seed/guard.py`: обе заглушки уже в нём, поэтому конфликтов при параллельной работе нет, каждая story заполняет свои функции. Если story идут последовательно, удобнее #60 → #71: #71 переиспользует готовый модуль и db-фикстуры.
 

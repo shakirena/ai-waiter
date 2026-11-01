@@ -60,3 +60,15 @@
 **Файлы:** app/api/demo_data.py, app/api/deps.py, app/api/health.py, app/main.py, app/seed/guard.py (docstring), тесты
 **Findings:** CRITICAL 0 · HIGH 0 · MEDIUM 0 · LOW 1 · INFO 4
 **Заметки:** тело и OpenAPI `/health/ready` прежние, ключа `demo_data` нет; `exc_info` из `_check` убран, БД пишется через `describe_error`, Redis — только имена классов; `CancelledError` не перехватывается; lifespan при недоступной БД не падает; проверка только при `APP_ENV=prod`, отключить нельзя. LOW: публичный `/health/ready` без rate-limit, в prod два соединения на запрос, рекомендуется закрыть путь в Caddy (отдельная задача). INFO: 503 при ok-проверках косвенно выдаёт демо (это следует из AC); маскирование host/user — #73; гонка логов монитора; блокировка демо-токенов — в story гостевого входа.
+
+---
+
+## ✅ QA (qa-lead)
+
+**Verdict:** G5 PASS 2026-10-29 (labels `kanban:ready-to-deploy`, `qa:passed`); тесты G5 — коммит 92affd0
+**Coverage:** `app/api/demo_data.py`, `app/api/health.py`, `app/api/deps.py`, `app/main.py` — 100% строк и ветвей (target ≥ 95%)
+**Tests:** unit 1448 passed · db 286 passed · 0 failed
+**Новые тесты G5:** backend/tests/db/test_health_db.py — `test_prod_with_demo_and_real_tenant_is_503_and_warns` (E-3: демо и боевое заведение → 503, один WARNING), `test_prod_with_unreachable_database_is_503_and_demo_warning_is_masked` (E-9 + NFR-1: неверный пароль → 503 `database: "fail"`, один WARNING `DEMO_CHECK_FAILED` без пароля и `exc_info`); docstring `test_prod_without_demo_tenant_is_ready` — E-10 → E-4
+**TC doc:** docs/test-cases/feature-71-demo-data-readiness.md; трассировка — docs/test-cases/traceability-tc.md (раздел #71), docs/traceability.md
+**TCs:** 14 total, 13 automated (PASS 13); ручной TC-71-014 (prod на Windows, `single`, настоящий `python -m app`) — не выполнен, для G6
+**Ограничения:** NFR-1 — `describe_error` маскирует только пароль (#73); Linux — по CI PR #72

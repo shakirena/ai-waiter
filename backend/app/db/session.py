@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import quote, quote_plus
 
@@ -22,6 +23,8 @@ from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 if TYPE_CHECKING:
+    from sqlalchemy.engine import URL
+
     from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -32,6 +35,54 @@ SERVER_SETTINGS: dict[str, str] = {"application_name": "ai-waiter", "timezone": 
 _MASK = "***"
 # Строка подключения не разбирается (например, нечисловой порт): где в тексте пароль, неизвестно.
 UNPARSABLE_URL_TEXT = "строка подключения DATABASE_URL не разбирается (проверьте её формат), текст ошибки скрыт"
+
+
+# --- #73: маскирование всех деталей подключения (arch: docs/arch/feature-73-describe-error-mask.md) ---
+# Заглушки фазы анализа: к _mask/describe_error пока НЕ подключены, текущее поведение не меняется.
+
+
+@dataclass(frozen=True, slots=True)
+class _UrlSecrets:
+    """Значения из ``DATABASE_URL``, которые нельзя показывать (решение 1–3 arch #73).
+
+    ``substrings`` — пароль (из userinfo и ``?password=``) во всех вариантах кодирования; заменяется
+    простой подстрокой, без границ токена. ``tokens`` — пользователь, хосты, явные порты, база и их
+    значения из query (``host``, ``port``, ``user``, ``database``, ``passfile``); заменяются только
+    целым токеном (рядом нет ``\\w``), без учёта регистра. Оба кортежа без пустых строк и
+    отсортированы по убыванию длины."""
+
+    substrings: tuple[str, ...]
+    tokens: tuple[str, ...]
+
+
+def _url_secrets(url: URL) -> _UrlSecrets:
+    """Собрать секретные значения из разобранного ``DATABASE_URL`` (решение 1–2, 5 arch #73).
+
+    Источники: ``url.password``, ``url.username``, ``url.host`` (целиком и по частям через запятую),
+    ``url.port`` (только если указан явно — порт по умолчанию не маскируется), ``url.database``;
+    из ``url.query`` (значение — строка или кортеж при повторе ключа): ``password`` → ``substrings``;
+    ``host`` (``h``, ``h:p``, ``[v6]:p``, списки через запятую — хост и порт по отдельности и целиком),
+    ``port``, ``user``, ``database``, ``passfile`` → ``tokens``. Каждое значение — в вариантах
+    ``raw``, ``quote(v, safe="")``, ``quote_plus(v)``. Не бросает на разобранном ``URL``."""
+    raise NotImplementedError
+
+
+def _mask_message(message: str, secrets: _UrlSecrets) -> str:
+    """Замаскировать одно сообщение исключения (без имени типа) — решение 3–4 arch #73.
+
+    Порядок: (1) ``secrets.substrings`` — ``str.replace``, длинные первыми; (2) ``secrets.tokens`` —
+    одно регулярное выражение ``(?<!\\w)(?:t1|t2|…)(?!\\w)`` с ``re.escape``, длинные первыми,
+    ``re.IGNORECASE``, один проход; (3) ``_mask_ip_literals``. Результат — ``***`` вместо значений."""
+    raise NotImplementedError
+
+
+def _mask_ip_literals(text: str) -> str:
+    """Заменить на ``***`` любые литералы IPv4/IPv6 в тексте, не только из URL (решение 4 arch #73).
+
+    Кандидаты ищутся регулярными выражениями и подтверждаются ``ipaddress.ip_address`` — строки вида
+    ``12:30:45`` или ``1.2.300.4`` не трогаются. Нужно для случая «в URL домен, а драйвер печатает
+    разрешённый IP»: ``Connect call failed ('192.0.2.10', 5432)``."""
+    raise NotImplementedError
 
 
 class Database:

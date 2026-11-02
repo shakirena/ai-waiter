@@ -175,3 +175,58 @@ def test_describe_error_with_unparsable_url_hides_text() -> None:
     text = db.describe_error(ValueError("invalid literal for int(): 'port' in u:Unparsable-Pa55@db.invalid"))
     assert text == UNPARSABLE_URL_TEXT
     assert "Unparsable-Pa55" not in text
+
+
+# ---------------------------------------------------------------- #73: маскирование всех деталей подключения
+# Заготовки фазы анализа (arch: docs/arch/feature-73-describe-error-mask.md); developer снимает skip.
+
+_SKIP_73 = pytest.mark.skip(reason="#73: реализация в фазе разработки")
+URL_73 = "postgresql+asyncpg://waiter_user:pw-s3cret@192.0.2.10:5433/waiter_db"
+
+
+@_SKIP_73
+def test_describe_error_masks_all_url_parts() -> None:
+    """AC-1: хост, порт, пользователь, база и пароль → ``***``; тип и остальной текст сохранены."""
+    db = _database(URL_73)
+    error = OSError(
+        'connection to server at "192.0.2.10", port 5433 failed: '
+        'password pw-s3cret rejected for user "waiter_user" database "waiter_db"'
+    )
+    assert db.describe_error(error) == (
+        'OSError: connection to server at "***", port *** failed: password *** rejected for user "***" database "***"'
+    )
+
+
+@_SKIP_73
+def test_describe_error_masks_whole_url_leaving_scheme() -> None:
+    """E-10: в тексте вся строка подключения — остаётся только схема с драйвером."""
+    db = _database(URL_73)
+    assert db.describe_error(RuntimeError(f"cannot connect to {URL_73}")) == (
+        "RuntimeError: cannot connect to postgresql+asyncpg://***:***@***:***/***"
+    )
+
+
+@_SKIP_73
+def test_describe_error_keeps_exception_type_names() -> None:
+    """E-4 и решение 3: имя типа не маскируется, даже если пользователь совпадает с ним."""
+    db = _database("postgresql+asyncpg://OSError:pw@db.example.com/x")
+    text = db.describe_error(OSError('auth failed for user "OSError"; RuntimeErrorx'))
+    assert text == 'OSError: auth failed for user "***"; RuntimeErrorx'
+
+
+@_SKIP_73
+def test_describe_error_masks_query_hosts_ports_and_password() -> None:
+    """E-7 и решение 1: ``?host=h:p`` (повтор ключа), ``[v6]:p`` и ``?password=`` маскируются."""
+    db = _database("postgresql+asyncpg://w@/x?host=192.0.2.10:5432&host=[2001:db8::2]:5434&password=q-pw")
+    text = db.describe_error(OSError("h 192.0.2.10:5432 [2001:db8::2]:5434 port 5434 q-pw"))
+    assert text.startswith("OSError: h ")
+    for value in ("192.0.2.10", "5432", "2001:db8::2", "5434", "q-pw"):
+        assert value not in text
+
+
+@_SKIP_73
+def test_describe_error_masks_resolved_ip_literals() -> None:
+    """E-13 и решение 4: в URL домен, драйвер печатает IP — любой литерал IP маскируется; время — нет."""
+    db = _database("postgresql+asyncpg://w:pw@db.example.com/x")
+    text = db.describe_error(OSError("Connect call failed ('192.0.2.10', 5432) [2001:db8::1] at 12:30:45"))
+    assert text == "OSError: Connect call failed ('***', 5432) [***] at 12:30:45"

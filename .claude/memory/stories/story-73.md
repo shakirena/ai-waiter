@@ -15,3 +15,13 @@
 **Size:** S
 
 ---
+
+## 🏗️ Архитектура (architect)
+
+**Таблицы / миграция / API / env:** не меняются
+**Решение (без отдельного ADR):** `make_url` → `_UrlSecrets`: пароль (userinfo и `?password=`) — подстрокой; пользователь, хосты (в том числе части через `,`, `?host=h:p`, `[v6]:p`), явный порт, база, `?port/user/database/passfile` — целым токеном `(?<!\w)…(?!\w)`, одним regex, длинные первыми, `IGNORECASE`; варианты raw/quote/quote_plus. Маскируется каждое `str(exc)` отдельно — имена типов не трогаются. Любой IPv4/IPv6-литерал маскируется по шаблону + `ipaddress` (E-13 в scope: разрешённый IP домена). Порт по умолчанию не маскируется. `UNPARSABLE_URL_TEXT` — без изменений (fail-closed и для `_url_secrets`)
+**Найдено:** `?password=` и `?user=` из query переопределяют userinfo в asyncpg-диалекте; `?password=` сейчас не маскируется — закрывается здесь же
+**Code stubs:** `backend/app/db/session.py` — `_UrlSecrets`, `_url_secrets`, `_mask_message`, `_mask_ip_literals` (не подключены); `backend/tests/test_db_session.py` — 5 тестов-заготовок со skip
+**Arch doc:** docs/arch/feature-73-describe-error-mask.md
+
+---

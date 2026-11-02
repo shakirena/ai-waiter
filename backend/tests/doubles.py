@@ -129,7 +129,7 @@ class FakeSession:
 
 
 class FakeDatabase(_Lifecycle):
-    """Двойник ``app.db.session.Database`` (#48): управляемые ``start/stop/ping`` без PostgreSQL.
+    """Двойник ``app.db.session.Database`` (#48): управляемые ``start/stop/ping/describe_error`` без PostgreSQL.
 
     ``session()`` выдаёт ``FakeSession`` и закрывает её при выходе — как ``Database.session``."""
 
@@ -138,6 +138,11 @@ class FakeDatabase(_Lifecycle):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.sessions: list[FakeSession] = []
+
+    def describe_error(self, exc: BaseException) -> str:
+        """Как ``Database.describe_error``, но без маскирования: у двойника нет строки подключения."""
+        message = str(exc)
+        return f"{type(exc).__name__}: {message}" if message else type(exc).__name__
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[FakeSession]:

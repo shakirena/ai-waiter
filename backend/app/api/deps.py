@@ -17,6 +17,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.demo_data import DemoDataMonitor
 from app.core.config import Settings
 from app.core.container import Container
 from app.core.events import EventBus
@@ -59,6 +60,12 @@ def get_rate_limiter(request: Request) -> RateLimiter:
 
 def get_database(request: Request) -> Database:
     return get_container(request).database
+
+
+def get_demo_data_monitor(request: Request) -> DemoDataMonitor:
+    """``request.app.state.demo_data_monitor`` — его создаёт ``create_app`` (#71, ADR-60.2)."""
+    monitor: DemoDataMonitor = request.app.state.demo_data_monitor
+    return monitor
 
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:

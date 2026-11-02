@@ -16,7 +16,8 @@ from fastapi import FastAPI
 
 from app import __version__
 from app.api import health
-from app.core.config import Settings, get_settings
+from app.api.demo_data import DemoDataMonitor
+from app.core.config import AppEnv, Settings, get_settings
 from app.core.container import build_container, start_container, stop_container
 from app.core.log import configure_logging
 from app.core.scheduler import TaskRegistry
@@ -31,9 +32,10 @@ def create_app(settings: Settings | None = None, *, registry: TaskRegistry | Non
     1. ``settings = settings or get_settings()``; ``configure_logging(settings)``.
     2. ``FastAPI(title="AI Waiter", version=__version__, lifespan=...)``; ``docs_url``/``redoc_url``/
        ``openapi_url`` = None, если ``not settings.is_docs_enabled``.
-    3. Роутеры: ``health.router``; далее ``/api`` и ``/integration/v1`` (следующие stories).
-    4. Если ``settings.serve_frontend`` — ``mount_spa(app, settings.frontend_dist_path)`` ПОСЛЕДНИМ.
-    5. ``registry`` по умолчанию — ``app.tasks.registry``.
+    3. ``app.state.demo_data_monitor = DemoDataMonitor(READINESS_CHECK_TIMEOUT)`` (#71, ADR-60.2).
+    4. Роутеры: ``health.router``; далее ``/api`` и ``/integration/v1`` (следующие stories).
+    5. Если ``settings.serve_frontend`` — ``mount_spa(app, settings.frontend_dist_path)`` ПОСЛЕДНИМ.
+    6. ``registry`` по умолчанию — ``app.tasks.registry``.
     """
     settings = settings or get_settings()
     configure_logging(settings)
@@ -55,6 +57,7 @@ def create_app(settings: Settings | None = None, *, registry: TaskRegistry | Non
     # Доступны и до старта lifespan: зависимости эндпоинтов читают их из request.app.state.
     app.state.settings = settings
     app.state.task_registry = registry
+    app.state.demo_data_monitor = DemoDataMonitor(health.READINESS_CHECK_TIMEOUT)
 
     app.include_router(health.router)
 
@@ -70,7 +73,11 @@ def _lifespan(settings: Settings, registry: TaskRegistry) -> Callable[[FastAPI],
 
     Неизвестный режим — ``ConfigError`` из ``build_container``: приложение не стартует.
     Недоступность Redis при старте процесс не роняет (``start_container`` логирует ошибку),
-    о ней сообщает ``/health/ready``."""
+    о ней сообщает ``/health/ready``.
+
+    При ``APP_ENV=prod`` после ``start_container`` — один ``DemoDataMonitor.refresh`` (#71, ADR-60.2):
+    предупреждение о демо-заведении попадает в лог и без опросов ``/health/ready``. Проверка
+    ограничена таймаутом, не бросает исключений и старт не прерывает (недоступная БД → ``UNKNOWN``)."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -87,6 +94,10 @@ def _lifespan(settings: Settings, registry: TaskRegistry) -> Callable[[FastAPI],
             },
         )
         try:
+            if settings.app_env is AppEnv.PROD:
+                # Внутри try: при отмене старта (CancelledError) контейнер всё равно остановится.
+                monitor: DemoDataMonitor = app.state.demo_data_monitor
+                await monitor.refresh(container.database)
             yield
         finally:
             await stop_container(container)

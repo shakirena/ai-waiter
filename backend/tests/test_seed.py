@@ -32,6 +32,7 @@ from app.models.menu import DESCRIPTION_MAX, EXTERNAL_ID_MAX, NAME_MAX, PREP_MIN
 from app.models.reference import EU14_ALLERGEN_CODES
 from app.models.visit import COMMENT_MAX, QTY_MAX, QTY_MIN
 from app.seed import data
+from app.seed.guard import FOREIGN_TENANTS_REFUSAL, ForeignTenantsError
 from app.seed.loader import SeededTable, SeedSummary
 
 SEED_DATA_FILE = Path(data.__file__)
@@ -236,6 +237,16 @@ def dev_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DATABASE_URL", FAKE_URL)
 
 
+async def _target_ok(session: AsyncSession) -> None:
+    """Проверка целевой базы (#60) прошла: в базе нет заведений, кроме демо."""
+
+
+@pytest.fixture
+def seed_target_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Подмена ``ensure_seed_target`` на no-op: иначе её запрос уйдёт в ``db.invalid`` и даст код 1."""
+    monkeypatch.setattr(seed_cli, "ensure_seed_target", _target_ok)
+
+
 SUMMARY = SeedSummary(
     tenant_id=data.DEMO_TENANT_ID,
     tables=(
@@ -291,7 +302,7 @@ def test_invalid_database_url_is_config_error_without_value(capsys: pytest.Captu
     assert PASSWORD not in err
 
 
-@pytest.mark.usefixtures("dev_env")
+@pytest.mark.usefixtures("dev_env", "seed_target_ok")
 def test_success_prints_relative_guest_links(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -303,7 +314,7 @@ def test_success_prints_relative_guest_links(
     assert "http" not in out
 
 
-@pytest.mark.usefixtures("dev_env")
+@pytest.mark.usefixtures("dev_env", "seed_target_ok")
 def test_database_url_argument_overrides_environment(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -322,7 +333,7 @@ def test_database_url_argument_overrides_environment(
     assert seen == [other]
 
 
-@pytest.mark.usefixtures("dev_env")
+@pytest.mark.usefixtures("dev_env", "seed_target_ok")
 def test_database_error_is_exit_1_without_password(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -332,6 +343,95 @@ def test_database_error_is_exit_1_without_password(
     assert PASSWORD not in captured.err + captured.out
     assert "***" in captured.err
     assert "alembic upgrade head" in captured.err
+
+
+async def _foreign_target(session: AsyncSession) -> None:
+    raise ForeignTenantsError
+
+
+@pytest.mark.usefixtures("dev_env")
+def test_foreign_tenants_are_refused_with_exit_code_2(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AC-1 (#60): в базе есть заведение, кроме демо, → код 2, текст в stderr, загрузчик не вызван."""
+    called: list[object] = []
+
+    async def spy_apply_seed(session: AsyncSession) -> SeedSummary:
+        called.append(session)
+        return SUMMARY
+
+    monkeypatch.setattr(seed_cli, "ensure_seed_target", _foreign_target)
+    monkeypatch.setattr(seed_cli, "apply_seed", spy_apply_seed)
+
+    assert seed_cli.main([]) == seed_cli.EXIT_FORBIDDEN == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert FOREIGN_TENANTS_REFUSAL in captured.err
+    assert "Не удалось загрузить демо-данные" not in captured.err
+    assert PASSWORD not in captured.err
+    assert "db.invalid" not in captured.err
+    assert called == []
+
+
+def test_exit_prod_forbidden_is_alias_of_exit_forbidden() -> None:
+    assert seed_cli.EXIT_PROD_FORBIDDEN == seed_cli.EXIT_FORBIDDEN == 2
+
+
+@pytest.mark.usefixtures("dev_env")
+def test_prod_refusal_happens_before_target_check(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """E-5: при ``APP_ENV=prod`` отказ раньше подключения — проверка целевой базы не вызывается."""
+    monkeypatch.setenv("APP_ENV", "prod")
+    called: list[object] = []
+
+    async def spy(session: AsyncSession) -> None:
+        called.append(session)
+
+    monkeypatch.setattr(seed_cli, "ensure_seed_target", spy)
+    assert seed_cli.main(["--database-url", FAKE_URL]) == 2
+    assert "APP_ENV=prod" in capsys.readouterr().err
+    assert called == []
+
+
+@pytest.mark.usefixtures("dev_env")
+def test_target_check_runs_before_apply_seed_in_same_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR-60.1: проверка — первый запрос транзакции сида, загрузчик получает ту же сессию."""
+    calls: list[tuple[str, object]] = []
+
+    async def spy_target(session: AsyncSession) -> None:
+        calls.append(("guard", session))
+
+    async def spy_apply_seed(session: AsyncSession) -> SeedSummary:
+        calls.append(("seed", session))
+        return SUMMARY
+
+    monkeypatch.setattr(seed_cli, "ensure_seed_target", spy_target)
+    monkeypatch.setattr(seed_cli, "apply_seed", spy_apply_seed)
+    assert seed_cli.main([]) == 0
+    assert [name for name, _ in calls] == ["guard", "seed"]
+    assert calls[0][1] is calls[1][1]
+
+
+@pytest.mark.usefixtures("dev_env")
+def test_database_error_in_target_check_is_exit_1_without_password(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """E-6: ошибка запроса проверки (нет соединения, нет таблицы) — код 1 через ``describe_error``."""
+
+    async def failing_target(session: AsyncSession) -> None:
+        raise RuntimeError(f"connection to dev:{PASSWORD}@db failed")
+
+    called: list[object] = []
+    monkeypatch.setattr(seed_cli, "ensure_seed_target", failing_target)
+    monkeypatch.setattr(seed_cli, "apply_seed", lambda session: called.append(session))
+    assert seed_cli.main([]) == seed_cli.EXIT_ERROR
+    captured = capsys.readouterr()
+    assert PASSWORD not in captured.err + captured.out
+    assert "***" in captured.err
+    assert "alembic upgrade head" in captured.err
+    assert FOREIGN_TENANTS_REFUSAL not in captured.err
+    assert called == []
 
 
 def test_module_entry_point_refuses_prod_in_subprocess() -> None:
@@ -363,3 +463,23 @@ def test_module_guard_raises_system_exit_with_main_code(
         runpy.run_module("app.seed", run_name="__main__", alter_sys=True)
     assert info.value.code == seed_cli.EXIT_PROD_FORBIDDEN
     assert "APP_ENV=prod" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("dev_env")
+@pytest.mark.parametrize("mode", ["single", "scaled"])
+def test_foreign_tenants_refusal_is_same_in_both_modes(
+    mode: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """E-10 (NFR-2): отказ AC-1 не зависит от ``APP_MODE``; Redis сиду не нужен (адрес фиктивный)."""
+    monkeypatch.setenv("APP_MODE", mode)
+    monkeypatch.setenv("REDIS_URL", f"redis://:{PASSWORD}@redis.invalid:6379/0")
+    called: list[object] = []
+    monkeypatch.setattr(seed_cli, "ensure_seed_target", _foreign_target)
+    monkeypatch.setattr(seed_cli, "apply_seed", lambda session: called.append(session))
+
+    assert seed_cli.main([]) == seed_cli.EXIT_FORBIDDEN
+    captured = capsys.readouterr()
+    assert captured.err.strip() == FOREIGN_TENANTS_REFUSAL
+    assert PASSWORD not in captured.err
+    assert "redis.invalid" not in captured.err
+    assert called == []

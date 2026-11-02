@@ -1,12 +1,17 @@
 """``python -m app.seed [--database-url URL]`` — загрузить демо-данные (ADR-7.12).
 
-Коды выхода: 0 — успех, 1 — ошибка конфигурации или БД, 2 — запрет при ``APP_ENV=prod``.
+Коды выхода: 0 — успех, 1 — ошибка конфигурации или БД, 2 — запрещено политикой: ``APP_ENV=prod``
+или в целевой базе есть заведения, кроме демо (#60).
 
 1. ``APP_ENV`` читается до остальной конфигурации (окружение процесса, затем ``.env``, как у
    приложения): при ``prod`` — отказ, даже если задан ``--database-url``.
 2. Подключение — ``--database-url`` или ``DATABASE_URL`` из ``Settings``.
-3. ``app.seed.loader.apply_seed`` в одной транзакции; ошибка — откат, текст без пароля.
-4. Печать относительных ссылок ``/t/{token}`` для локальной проверки.
+3. Одна транзакция. Первый её запрос — ``app.seed.guard.ensure_seed_target`` (ADR-60.1): если в
+   базе есть заведение, кроме ``DEMO_TENANT_ID``, — отказ с кодом 2 (``FOREIGN_TENANTS_REFUSAL``
+   в stderr), ничего не записано. Ошибка самого запроса (нет соединения, нет таблицы ``tenants``) —
+   код 1, как любая ошибка БД.
+4. ``app.seed.loader.apply_seed`` в той же транзакции; ошибка — откат, текст без пароля.
+5. Печать относительных ссылок ``/t/{token}`` для локальной проверки.
 
 Повторный запуск не создаёт дублей и возвращает данные к эталонным значениям. Event loop —
 стандартный ``asyncio.run`` (на Windows — Proactor, с ним asyncpg работает, ADR-5).
@@ -25,11 +30,13 @@ from pydantic_settings import BaseSettings
 
 from app.core.config import AppEnv, Settings, format_validation_error
 from app.db.session import Database
+from app.seed.guard import FOREIGN_TENANTS_REFUSAL, ForeignTenantsError, ensure_seed_target
 from app.seed.loader import SeedSummary, apply_seed
 
 EXIT_OK = 0
 EXIT_ERROR = 1
-EXIT_PROD_FORBIDDEN = 2
+EXIT_FORBIDDEN = 2
+EXIT_PROD_FORBIDDEN = EXIT_FORBIDDEN
 
 PROD_REFUSAL = (
     "Сид-данные запрещены при APP_ENV=prod: демо-токены столов детерминированы и годятся только "
@@ -67,6 +74,7 @@ def _load_settings(database_url: str | None) -> Settings:
 async def _run(database: Database) -> SeedSummary:
     try:
         async with database.session() as session, session.begin():
+            await ensure_seed_target(session)
             return await apply_seed(session)
     finally:
         await database.stop()
@@ -95,6 +103,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     database = Database(settings)
     try:
         summary = asyncio.run(_run(database))
+    except ForeignTenantsError:
+        print(FOREIGN_TENANTS_REFUSAL, file=sys.stderr)
+        return EXIT_FORBIDDEN
     except Exception as exc:
         print(f"Не удалось загрузить демо-данные: {database.describe_error(exc)}", file=sys.stderr)
         print("Проверьте DATABASE_URL и примените миграции: uv run alembic upgrade head", file=sys.stderr)

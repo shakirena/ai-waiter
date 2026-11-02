@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Callable
@@ -7,8 +8,10 @@ from collections.abc import Callable
 import pytest
 from httpx import ASGITransport, AsyncClient, Response
 
+import app.api.demo_data as demo_data_module
 import app.api.health as health_module
 import app.main as main_module
+from app.api.demo_data import DEMO_FOUND_WARNING
 from app.core.config import Settings
 from app.core.container import Container
 from app.core.scheduler import TaskRegistry
@@ -80,7 +83,12 @@ async def test_ready_returns_503_without_details_when_check_fails(
     assert "10.0.0.5" not in r.text
     logged = [rec for rec in caplog.records if rec.name == "app.api.health"]
     assert [getattr(rec, "component", None) for rec in logged] == [failing]
-    assert logged[0].exc_info is not None, "детали ошибки должны попасть в лог"
+    # #71: без traceback и без сообщения клиента Redis (там может быть URL с паролем) — только класс.
+    assert logged[0].exc_info is None
+    message = logged[0].getMessage()
+    assert "ConnectionError" in message
+    assert "s3cret" not in message
+    assert "10.0.0.5" not in message
 
 
 async def test_ready_returns_503_when_ping_reports_false(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -237,3 +245,197 @@ async def test_liveness_does_not_touch_database(monkeypatch: pytest.MonkeyPatch)
         monkeypatch, lambda s: make_fake_container(s, database=database), "/health", settings=make_settings()
     )
     assert r.status_code == 200
+
+
+# ---------------------------------------------------------------- #71: демо-заведение при APP_ENV=prod (ADR-60.2/60.3)
+
+PROD = {"app_env": "prod", "public_base_url": "https://menu.example.com"}
+
+
+class DemoQuery:
+    """Подмена ``app.api.demo_data.demo_tenant_exists``: результат, ошибка или задержка; счётчик вызовов."""
+
+    def __init__(self, result: bool = False, *, error: Exception | None = None, delay: float = 0.0) -> None:
+        self.result = result
+        self.error = error
+        self.delay = delay
+        self.calls = 0
+
+    async def __call__(self, session: object) -> bool:
+        self.calls += 1
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+def _install(monkeypatch: pytest.MonkeyPatch, query: DemoQuery) -> DemoQuery:
+    monkeypatch.setattr(demo_data_module, "demo_tenant_exists", query)
+    return query
+
+
+MODES = pytest.mark.parametrize(("overrides", "redis"), [({}, "skipped"), (SCALED, "ok")], ids=["single", "scaled"])
+
+
+@MODES
+async def test_prod_demo_found_is_503_with_unchanged_body(
+    monkeypatch: pytest.MonkeyPatch, overrides: dict[str, str], redis: str
+) -> None:
+    _install(monkeypatch, DemoQuery(True))
+    [r] = await _get_with_container(
+        monkeypatch, make_fake_container, "/health/ready", settings=make_settings(**PROD, **overrides)
+    )
+    assert r.status_code == 503
+    assert r.json() == {"status": "not_ready", "checks": {"database": "ok", "redis": redis}}
+    assert "demo" not in r.text.lower()
+
+
+@MODES
+async def test_prod_demo_check_failed_is_503(
+    monkeypatch: pytest.MonkeyPatch, overrides: dict[str, str], redis: str
+) -> None:
+    _install(monkeypatch, DemoQuery(error=RuntimeError("relation tenants does not exist")))
+    [r] = await _get_with_container(
+        monkeypatch, make_fake_container, "/health/ready", settings=make_settings(**PROD, **overrides)
+    )
+    assert r.status_code == 503
+    assert r.json() == {"status": "not_ready", "checks": {"database": "ok", "redis": redis}}
+    assert "tenants" not in r.text
+
+
+async def test_prod_demo_check_timeout_is_503(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(health_module, "READINESS_CHECK_TIMEOUT", 0.05)
+    _install(monkeypatch, DemoQuery(True, delay=5.0))
+    [r] = await _get_with_container(monkeypatch, make_fake_container, "/health/ready", settings=make_settings(**PROD))
+    assert r.status_code == 503
+    assert r.json() == {"status": "not_ready", "checks": {"database": "ok", "redis": "skipped"}}
+
+
+@MODES
+async def test_prod_without_demo_is_ready(
+    monkeypatch: pytest.MonkeyPatch, overrides: dict[str, str], redis: str
+) -> None:
+    query = _install(monkeypatch, DemoQuery(False))
+    [r] = await _get_with_container(
+        monkeypatch, make_fake_container, "/health/ready", settings=make_settings(**PROD, **overrides)
+    )
+    assert r.status_code == 200
+    assert r.json() == {"status": "ready", "checks": {"database": "ok", "redis": redis}}
+    assert query.calls == 2, "одна проверка в lifespan и одна на запрос"
+
+
+async def test_prod_database_down_is_503_regardless_of_demo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """E-9: БД недоступна — 503 из-за ``database``; «демо нет» не делает приложение готовым."""
+    _install(monkeypatch, DemoQuery(False))
+    [r] = await _get_with_container(
+        monkeypatch,
+        lambda s: make_fake_container(s, database=FakeDatabase(ping_result=False)),
+        "/health/ready",
+        settings=make_settings(**PROD),
+    )
+    assert r.status_code == 503
+    assert r.json() == {"status": "not_ready", "checks": {"database": "fail", "redis": "skipped"}}
+
+
+@pytest.mark.parametrize("app_env", ["dev", "test"])
+@pytest.mark.parametrize("overrides", [{}, SCALED], ids=["single", "scaled"])
+async def test_demo_check_not_called_outside_prod(
+    monkeypatch: pytest.MonkeyPatch, app_env: str, overrides: dict[str, str]
+) -> None:
+    """FR-4/E-7/E-8: вне prod проверка не вызывается, демо в базе на readiness не влияет."""
+    query = _install(monkeypatch, DemoQuery(True))
+    [r] = await _get_with_container(
+        monkeypatch, make_fake_container, "/health/ready", settings=make_settings(app_env=app_env, **overrides)
+    )
+    assert r.status_code == 200
+    assert query.calls == 0
+
+
+async def test_prod_demo_warning_logged_once_for_repeated_polls(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    query = _install(monkeypatch, DemoQuery(True))
+    with caplog.at_level(logging.INFO, logger="app.api.demo_data"):
+        responses = await _get_with_container(
+            monkeypatch, make_fake_container, *["/health/ready"] * 3, settings=make_settings(**PROD)
+        )
+    assert [r.status_code for r in responses] == [503, 503, 503]
+    assert query.calls == 4
+    logged = [rec for rec in caplog.records if rec.name == "app.api.demo_data"]
+    assert [(rec.levelno, rec.getMessage()) for rec in logged] == [(logging.WARNING, DEMO_FOUND_WARNING)]
+
+
+async def test_prod_demo_check_runs_concurrently_with_pings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Проверка демо идёт в том же ``gather``, что и ping-и: время запроса — одна задержка, не сумма."""
+    monkeypatch.setattr(health_module, "READINESS_CHECK_TIMEOUT", 0.5)
+    _install(monkeypatch, DemoQuery(False, delay=0.3))
+    container = make_fake_container(
+        make_settings(**PROD, **SCALED),
+        database=FakeDatabase(ping_delay=0.3),
+        bus=FakeEventBus(ping_delay=0.3),
+        rate_limiter=FakeRateLimiter(ping_delay=0.3),
+    )
+    monkeypatch.setattr(main_module, "build_container", lambda s, r: container)
+    application = create_app(container.settings, registry=TaskRegistry())
+    async with application.router.lifespan_context(application):
+        transport = ASGITransport(app=application)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            started = time.perf_counter()
+            r = await ac.get("/health/ready")
+            elapsed = time.perf_counter() - started
+    assert r.status_code == 200
+    assert elapsed < 0.55, f"проверка демо шла последовательно с ping-ами: {elapsed:.2f} с"
+
+
+async def test_prod_openapi_has_no_demo_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR-60.3: схема ``/health/ready`` прежняя — в ``checks`` только ``database`` и ``redis``."""
+    _install(monkeypatch, DemoQuery(False))
+    [r] = await _get_with_container(
+        monkeypatch, make_fake_container, "/openapi.json", settings=make_settings(**PROD, docs_enabled=True)
+    )
+    assert r.status_code == 200
+    schema = r.json()["components"]["schemas"]["ReadinessResponse"]
+    assert set(schema["properties"]) == {"status", "checks"}
+    assert schema["properties"]["checks"]["propertyNames"]["enum"] == ["database", "redis"]
+    assert "demo" not in r.text.lower()
+
+
+async def test_check_database_exception_logged_masked_without_traceback(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``_check``: исключение из ping настоящего ``Database`` — текст через ``describe_error``, без traceback."""
+    secret_url = "postgresql+asyncpg://ai_waiter:pw-s3cret@db.invalid/ai_waiter"
+
+    def factory(settings: Settings) -> Container:
+        database = Database(settings)
+
+        async def raising_ping() -> bool:
+            raise ConnectionRefusedError(f"cannot connect: {secret_url}")
+
+        database.ping = raising_ping  # type: ignore[method-assign]
+        return make_fake_container(settings, database=database)  # type: ignore[arg-type]
+
+    with caplog.at_level(logging.WARNING, logger="app.api.health"):
+        [r] = await _get_with_container(
+            monkeypatch, factory, "/health/ready", settings=make_settings(database_url=secret_url)
+        )
+    assert r.status_code == 503
+    logged = [rec for rec in caplog.records if rec.name == "app.api.health"]
+    assert [getattr(rec, "component", None) for rec in logged] == ["database"]
+    assert logged[0].exc_info is None
+    message = logged[0].getMessage()
+    assert "ConnectionRefusedError" in message
+    assert "***" in message
+    assert "pw-s3cret" not in message
+
+
+def test_exception_names_follow_cause_chain_without_messages() -> None:
+    try:
+        try:
+            raise OSError("redis://:s3cret@cache.example.com:6379")
+        except OSError as inner:
+            raise ConnectionError("Error connecting to redis://:s3cret@cache.example.com") from inner
+    except ConnectionError as exc:
+        text = health_module._exception_names(exc)
+    assert text == "ConnectionError <- OSError"

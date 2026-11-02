@@ -3,14 +3,18 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 import pytest
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 
+import app.api.demo_data as demo_data_module
+import app.api.health as health_module
 import app.main as main_module
 from app.api import deps
+from app.api.demo_data import DemoDataMonitor, DemoDataState
 from app.core.config import ConfigError, Settings
 from app.core.container import Container
 from app.core.events import EventBus
@@ -133,3 +137,85 @@ async def test_app_settings_fall_back_to_state_before_lifespan() -> None:
         r = await ac.get("/health")
     assert r.status_code == 200
     assert r.json()["mode"] == "scaled"
+
+
+# ---------------------------------------------------------------- #71: DemoDataMonitor в create_app и lifespan
+
+PROD = {"app_env": "prod", "public_base_url": "https://menu.example.com"}
+
+
+class _MonitorSpy(DemoDataMonitor):
+    """Записывает вызовы ``refresh`` (базу, с которой вызван) и делегирует настоящему методу."""
+
+    def __init__(self) -> None:
+        super().__init__(2.0)
+        self.refreshed: list[object] = []
+
+    async def refresh(self, database: Database) -> DemoDataState:
+        self.refreshed.append(database)
+        return await super().refresh(database)
+
+
+def _spy_app(monkeypatch: pytest.MonkeyPatch, settings: Settings, container: Container) -> tuple[FastAPI, _MonitorSpy]:
+    monkeypatch.setattr(main_module, "build_container", lambda s, r: container)
+    application = create_app(settings, registry=TaskRegistry())
+    spy = _MonitorSpy()
+    application.state.demo_data_monitor = spy
+    return application, spy
+
+
+def test_create_app_creates_demo_data_monitor() -> None:
+    application = create_app(make_settings(), registry=TaskRegistry())
+    monitor = application.state.demo_data_monitor
+    assert isinstance(monitor, DemoDataMonitor)
+    assert monitor.state is None
+    assert monitor._check_timeout == health_module.READINESS_CHECK_TIMEOUT
+
+
+def test_get_demo_data_monitor_returns_state_object() -> None:
+    application = create_app(make_settings(), registry=TaskRegistry())
+    request = Request({"type": "http", "app": application})
+    assert deps.get_demo_data_monitor(request) is application.state.demo_data_monitor
+
+
+async def test_lifespan_in_prod_refreshes_once_with_container_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def found(session: object) -> bool:
+        return True
+
+    monkeypatch.setattr(demo_data_module, "demo_tenant_exists", found)
+    settings = make_settings(**PROD)
+    container = make_fake_container(settings)
+    application, spy = _spy_app(monkeypatch, settings, container)
+    async with application.router.lifespan_context(application):
+        assert spy.refreshed == [container.database]
+        assert spy.state is DemoDataState.FOUND
+
+
+async def test_lifespan_in_prod_survives_failed_check(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """БД недоступна при старте в prod: старт не прерывается, состояние ``UNKNOWN``, liveness 200."""
+
+    async def broken(session: object) -> bool:
+        raise ConnectionRefusedError("db down")
+
+    monkeypatch.setattr(demo_data_module, "demo_tenant_exists", broken)
+    settings = make_settings(**PROD)
+    application, spy = _spy_app(monkeypatch, settings, make_fake_container(settings))
+    with caplog.at_level(logging.WARNING, logger="app.api.demo_data"):
+        async with application.router.lifespan_context(application):
+            assert spy.state is DemoDataState.UNKNOWN
+            async with AsyncClient(transport=ASGITransport(app=application), base_url="http://testserver") as ac:
+                assert (await ac.get("/health")).status_code == 200
+    assert len(spy.refreshed) == 1
+    assert [rec.levelno for rec in caplog.records if rec.name == "app.api.demo_data"] == [logging.WARNING]
+
+
+@pytest.mark.parametrize("app_env", ["dev", "test"])
+async def test_lifespan_outside_prod_does_not_refresh(monkeypatch: pytest.MonkeyPatch, app_env: str) -> None:
+    settings = make_settings(app_env=app_env)
+    application, spy = _spy_app(monkeypatch, settings, make_fake_container(settings))
+    async with application.router.lifespan_context(application):
+        pass
+    assert spy.refreshed == []
+    assert spy.state is None

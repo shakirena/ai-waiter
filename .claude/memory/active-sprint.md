@@ -6,7 +6,10 @@
 
 ## Ready for Dev
 
-*(пусто)*
+- #73 (bug, security, priority:medium, size:s) — `describe_error` раскрывает детали подключения из `DATABASE_URL`. G1 и G2 PASS 2026-11-02. Ветка fix/73-describe-error-mask, draft PR #74. Spec: docs/specs/feature-73-describe-error-mask.md (FR-1…FR-5, NFR-1…NFR-4, AC-1, E-1…E-13); arch: docs/arch/feature-73-describe-error-mask.md (без ADR). Стабы: `_UrlSecrets`, `_url_secrets`, `_mask_message`, `_mask_ip_literals` в backend/app/db/session.py; 5 тестов-заготовок со skip в tests/test_db_session.py. Прототип алгоритма architect — в scratchpad сессии (вне репозитория).
+  - Решения: пароль — подстрокой; хост/порт/пользователь/база и `?host/port/user/password/database/passfile` — токенами `(?<!\w)…(?!\w)`, без учёта регистра; любые литералы IPv4/IPv6 маскируются по шаблону (E-13); порт по умолчанию не маскируется; `UNPARSABLE_URL_TEXT` без изменений.
+  - После G4 обновить: NFR-1 и E-6 spec #60, Security arch #60, TC-60-006 и шаг 7 TC-60-010, traceability.
+  - Деплой (G6) не планируется.
 
 ## In Development (WIP: 0/5)
 
@@ -37,7 +40,6 @@
 
 ## Backlog
 
-- #73 (bug, security, priority:medium) — `Database.describe_error` не скрывает хост, порт и пользователя из `DATABASE_URL` (LOW из security review #60/#71; затрагивает stderr сида, `DEMO_CHECK_FAILED`, `_check` компонента `database`).
 - #70 (bug, #63/#66, NFR-8 spec #8) — итог синхронизации меню не пишется в структурированный лог; фиксируется только строкой `menu_sync_runs`. Не блокирует G5.
 
 ## Ready to Deploy (группа feature #6)

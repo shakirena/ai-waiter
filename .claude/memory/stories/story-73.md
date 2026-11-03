@@ -25,3 +25,19 @@
 **Arch doc:** docs/arch/feature-73-describe-error-mask.md
 
 ---
+
+## 💻 Реализация (developer)
+
+**Branch:** fix/73-describe-error-mask (PR #74)
+**Новые файлы:** нет
+**Изменённые файлы:**
+- backend/app/db/session.py — `_url_secrets` (+ `_query_values`, `_host_values`, `_variants`), `_mask_message`, `_mask_ip_literals` (+ `_IPV4_CANDIDATE`, `_IPV6_CANDIDATE`, `_is_ip`), `describe_error` переключён, `_mask` удалён
+- backend/app/api/health.py, backend/app/menu_sync/__main__.py — только docstring
+- backend/tests/test_db_session.py — skip снят, +E-1…E-9, мультихост, сокет, `_mask_ip_literals`, оракул asyncpg
+- backend/tests/test_health.py, test_demo_data.py, test_seed.py, tests/db/test_seed.py — проверки отсутствия хоста/пользователя
+- docs/arch/feature-73-describe-error-mask.md — раздел «Реализация»
+
+**Build:** ruff OK · format OK · pytest полный прогон 1776 passed, 3 skipped (unit без db/scaled — 1490 passed; db — 286 passed)
+**Заметки:** часть `?host=` без скобок с двумя и более `:` считается IPv6 без порта (не разбивается на `h:p`), иначе последняя группа (`1`) стала бы токеном-портом. Документы #60 не трогались — doc-sync.
+
+---

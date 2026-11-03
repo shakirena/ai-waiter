@@ -177,3 +177,16 @@ Developer/tester дописывают:
 
 1. **(Не блокирует.)** Нужна ли отдельная задача на `menu_sync.mask_url_passwords`: в сообщении argparse хост из введённого `--database-url` остаётся. Рекомендация — не делать: значение пользователь сам ввёл в свою консоль, в лог службы оно не попадает.
 2. **(Не блокирует.)** Маскирование любого IP-литерала (п. 4) шире, чем требует spec (в spec E-13 был открытым вопросом и после G2 переведён в scope). Если пользователь предпочтёт маскировать только значения из URL, `_mask_ip_literals` исключается из `_mask_message`, а E-13 переходит в «известные ограничения».
+
+## Реализация
+
+**Код** — `backend/app/db/session.py`:
+- `_url_secrets` собирает `_UrlSecrets` по решениям 1, 2 и 5. Вспомогательные функции: `_query_values` (строка или кортеж из query), `_host_values` (целиком, части через `,`, `h:p`, `[v6]:p`; часть с двумя и более `:` без скобок считается IPv6 без порта и не разбивается) и `_variants` (raw/quote/quote_plus, без пустых и повторов, длинные первыми).
+- `_mask_message`: пароль заменяется подстрокой, токены — одним regex `(?<!\w)(?:…)(?!\w)` с `IGNORECASE`, затем `_mask_ip_literals`.
+- `_mask_ip_literals`: константы `_IPV6_CANDIDATE` (серия `[0-9A-Fa-f:.]` между границами, проверка на два `:` и `ipaddress.ip_address`, хвостовые `.` и одиночное `:` остаются в тексте) и `_IPV4_CANDIDATE` (шаблон из решения 4, проверка через `ipaddress`). IPv6 проверяется первым, чтобы `::ffff:192.0.2.10` маскировался целиком.
+- `Database.describe_error`: `make_url` и `_url_secrets` вызываются один раз, любое исключение даёт `UNPARSABLE_URL_TEXT`. Затем `_mask_message` применяется к каждому `str(exc)`, имена типов и ` <- ` подставляются как есть. `Database._mask` удалён.
+- Docstring и комментарии «пароль → `***`» заменены на «детали подключения → `***`»: `session.py` (`ping`, `describe_error`), `app/api/health.py`, `app/menu_sync/__main__.py`. В `app/api/demo_data.py` и `app/seed/__main__.py` упоминаний пароля нет, они не менялись.
+
+**Тесты:**
+- `backend/tests/test_db_session.py`: с пяти заготовок снят skip. Добавлены тесты на E-1 (порт по умолчанию и явный `5432`), E-2/E-3, E-4 (границы токена), E-5 (регистр), E-6, E-7 (`?user/database/port/passfile`, прочие параметры query не маскируются), E-8, E-9, мультихост в netloc, unix-сокет, маскирование каждого сообщения в цепочке, fail-closed при исключении в `_url_secrets`, параметризованные unit-тесты `_mask_ip_literals` и оракул `PGDialect_asyncpg().create_connect_args`. В `test_ping_failure_returns_false_and_masks_password` добавлена проверка, что в WARNING нет хоста и пользователя.
+- Проверки отсутствия хоста и пользователя добавлены в `tests/test_health.py` (2 теста), `tests/test_demo_data.py`, `tests/test_seed.py` и `tests/db/test_seed.py::test_cli_wrong_password_is_not_shown` (хост и пользователь из `TEST_DATABASE_URL`, целым токеном).

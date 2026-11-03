@@ -420,7 +420,7 @@ def test_database_error_in_target_check_is_exit_1_without_password(
     """E-6: ошибка запроса проверки (нет соединения, нет таблицы) — код 1 через ``describe_error``."""
 
     async def failing_target(session: AsyncSession) -> None:
-        raise RuntimeError(f"connection to dev:{PASSWORD}@db failed")
+        raise RuntimeError(f"connection to dev:{PASSWORD}@db.invalid/demo_dev failed")
 
     called: list[object] = []
     monkeypatch.setattr(seed_cli, "ensure_seed_target", failing_target)
@@ -428,7 +428,9 @@ def test_database_error_in_target_check_is_exit_1_without_password(
     assert seed_cli.main([]) == seed_cli.EXIT_ERROR
     captured = capsys.readouterr()
     assert PASSWORD not in captured.err + captured.out
-    assert "***" in captured.err
+    assert "db.invalid" not in captured.err + captured.out
+    assert "demo_dev" not in captured.err + captured.out
+    assert "connection to ***:***@***/*** failed" in captured.err
     assert "alembic upgrade head" in captured.err
     assert FOREIGN_TENANTS_REFUSAL not in captured.err
     assert called == []

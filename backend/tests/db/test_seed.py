@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Iterator
 from decimal import Decimal
 
@@ -299,6 +300,11 @@ def test_cli_wrong_password_is_not_shown(committed_seed: str, capsys: pytest.Cap
     captured = capsys.readouterr()
     assert wrong not in captured.err + captured.out
     assert "Не удалось загрузить демо-данные" in captured.err
+    # #73: хост и пользователь из строки подключения тоже не показываются (целым токеном, без учёта регистра).
+    parsed = make_url(committed_seed)
+    for value in (parsed.host, parsed.username):
+        if value:
+            assert not re.search(rf"(?<!\w){re.escape(value)}(?!\w)", captured.err, re.IGNORECASE)
 
 
 # ---------------------------------------------------------------- #60: проверка целевой базы

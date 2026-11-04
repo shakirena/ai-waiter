@@ -1,6 +1,6 @@
 # Traceability Matrix
 
-*Last updated: 2026-11-04 (doc-sync после G4 bug #73)*
+*Last updated: 2026-11-04 (doc-sync после G5 bug #73)*
 
 | Feature | Story | ТЗ | Spec | Arch | Code (router/service) | Tests | TC Doc | Status |
 |---------|-------|----|------|------|------------------------|-------|--------|--------|
@@ -130,7 +130,7 @@
 | TC-60-003 | E-1, FR-2 | db/test_seed.py, test_seed_guard.py | PASS |
 | TC-60-004 | E-2, FR-2 | db/test_seed.py | PASS |
 | TC-60-005 | E-5, FR-2 | test_seed.py | PASS |
-| TC-60-006 | E-6, NFR-1; spec #73 NFR-1 | test_seed.py, test_seed_guard.py, db/test_seed.py (`test_cli_without_schema_fails_with_hint`, `test_cli_wrong_password_is_not_shown`), test_db_session.py (#73) | PASS (2026-10-28); ожидания расширены в #73 (нет хоста, порта, пользователя, базы) — перепрогон в G5 #73 |
+| TC-60-006 | E-6, NFR-1; spec #73 NFR-1 | test_seed.py, test_seed_guard.py, db/test_seed.py (`test_cli_without_schema_fails_with_hint`, `test_cli_wrong_password_is_not_shown`), test_db_session.py (#73) | PASS (2026-10-28); ожидания расширены в #73 (нет хоста, порта, пользователя, базы); перепрогон в G5 #73 — PASS (2026-11-04, unit и db локально, шаг 7 TC-60-010 вручную) |
 | TC-60-007 | AC-1, NFR-1 | test_seed_guard.py, test_seed.py, db/test_seed.py (`_assert_refused`) | PASS |
 | TC-60-008 | FR-1, NFR-4 | test_seed.py, test_seed_guard.py | PASS |
 | TC-60-009 | E-10, NFR-2, NFR-3, NFR-6 | test_seed.py::test_foreign_tenants_refusal_is_same_in_both_modes; матрица CI | PASS (Windows локально; Linux — по CI PR #72) |
@@ -191,3 +191,26 @@
 | AC-1 — пример из spec: все пять значений → `***` | 1–3 | `describe_error` | test_db_session.py::test_describe_error_masks_all_url_parts | реализовано |
 
 Обновлено после G4: spec #60 (NFR-1, E-6), arch #60 (Security), docs/test-cases/feature-60-demo-seed-guard.md (TC-60-006, TC-60-010 шаг 7), строки TC-60-006 и TC-71-003 в docs/test-cases/traceability-tc.md, строки #73, NFR-1 #60, TC-60-006 и TC-71-003 выше. Следующий шаг — G5: TC #73 и перепрогон TC-60-006.
+
+### G5 #73 (2026-11-04): TC → требования
+
+TC: docs/test-cases/feature-73-describe-error-mask.md — 16 TC, PASS 16 (ручной TC-73-016). Прогон: unit 1496 passed, db 286 passed (локально Windows, PostgreSQL 16), CI PR #74 зелёный; покрытие `app/db/session.py` 100% строк и ветвей. Тесты G5: test_db_session.py::test_describe_error_masks_query_ipv6_host_without_port (E-6, E-7), ::test_describe_error_with_password_only_masks_password_and_ip_literals (FR-1, E-13); проверка хоста в test_menu_sync_cli.py::test_import_database_error_hides_password (FR-5, NFR-1).
+
+| TC | Требования |
+|----|------------|
+| TC-73-001 | AC-1, FR-1 |
+| TC-73-002 | E-10, NFR-1 |
+| TC-73-003 | FR-1 (хост), E-5, E-6 |
+| TC-73-004 | E-1 |
+| TC-73-005 | FR-1 (query), E-7 |
+| TC-73-006 | E-9 |
+| TC-73-007 | E-13 |
+| TC-73-008 | FR-2, FR-5, E-12 |
+| TC-73-009 | FR-2, E-2, E-3, E-4 |
+| TC-73-010 | Security review LOW (a2688fd, 0c0ac1c) |
+| TC-73-011 | FR-3, E-8 |
+| TC-73-012 | FR-4, E-11 |
+| TC-73-013 | FR-5, NFR-1 (health, demo_data, seed, menu_sync) |
+| TC-73-014 | NFR-2, NFR-3, NFR-4 |
+| TC-73-015 | регрессия TC-60-006, TC-60-010 шаг 7 |
+| TC-73-016 | AC-1, NFR-1, NFR-2 (ручной, Windows `single`) |

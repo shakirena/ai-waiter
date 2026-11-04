@@ -12,13 +12,17 @@
 
 *(пусто)*
 
-## In Testing (WIP: 1/5)
+## In Testing (WIP: 0/5)
 
-- #73 (bug, security, priority:medium, size:s) — `describe_error` раскрывает детали подключения из `DATABASE_URL`. kanban:testing, security:passed. G3 PASS 2026-11-02, G4 PASS 2026-11-04. Ветка fix/73-describe-error-mask, draft PR #74. Код: 8be2d01 (реализация в backend/app/db/session.py, docstring health.py, menu_sync/__main__.py; тесты test_db_session.py, test_health.py, test_demo_data.py, test_seed.py, db/test_seed.py), a2688fd (маскирование по объединённым участкам — security LOW: обрывки пароля/IP), 0c0ac1c (сборка копии без пароля за O(n) — security LOW). Spec: docs/specs/feature-73-describe-error-mask.md; arch: docs/arch/feature-73-describe-error-mask.md (раздел «Реализация»).
+*(пусто)*
+
+## Ready to Deploy (#73)
+
+- #73 (bug, security, priority:medium, size:s) — `describe_error` раскрывает детали подключения из `DATABASE_URL`. kanban:ready-to-deploy, qa:passed, security:passed. G3 PASS 2026-11-02, G4 PASS 2026-11-04, G5 PASS 2026-11-04. Ветка fix/73-describe-error-mask, draft PR #74. Код: 8be2d01 (реализация в backend/app/db/session.py, docstring health.py, menu_sync/__main__.py; тесты test_db_session.py, test_health.py, test_demo_data.py, test_seed.py, db/test_seed.py), a2688fd (маскирование по объединённым участкам — security LOW: обрывки пароля/IP), 0c0ac1c (сборка копии без пароля за O(n) — security LOW). Spec: docs/specs/feature-73-describe-error-mask.md; arch: docs/arch/feature-73-describe-error-mask.md (раздел «Реализация»).
   - Прогон: unit 1494 passed; полный pytest 1780 passed, 3 skipped (Redis); db 286 passed; покрытие app/db/session.py 100% строк.
   - Принятые остаточные риски: значения, слитые с буквами (`waiterdb`, `adminmin` при пароле `min` → `ad******`), порт по умолчанию, CNAME, IPv4 с ведущими нулями.
   - Doc-sync после G4 выполнен 2026-11-04 (7ffa804): документы #60 (NFR-1, E-6, Security, TC-60-006, TC-60-010), traceability.
-  - Для G5: TC #73, перепрогон TC-60-006, по желанию ручной шаг 7 TC-60-010; db-тест test_cli_wrong_password_is_not_shown — в Linux-джобе `backend-services` (CI PR #74).
+  - G5 (2026-11-04): TC docs/test-cases/feature-73-describe-error-mask.md — 16 TC, PASS 16 (ручной TC-73-016); unit 1496 passed, db 286 passed локально; покрытие session.py 100% строк и ветвей; TC-60-006 и шаг 7 TC-60-010 перепрогнаны — PASS. Коммиты G5: cd8277d (тесты ветвей, перепрогон TC-60), e86675c (TC, трассировка, проверка хоста в test_menu_sync_cli.py), 0aa942b.
   - Деплой (G6) не планируется.
 
 ## Ready to Deploy (#71)

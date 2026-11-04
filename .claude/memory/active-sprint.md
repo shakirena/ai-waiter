@@ -16,6 +16,15 @@
 
 *(пусто)*
 
+## Ready to Deploy (#73)
+
+- #73 (bug, security, priority:medium, size:s) — `describe_error` раскрывает детали подключения из `DATABASE_URL`. kanban:ready-to-deploy, qa:passed, security:passed. G3 PASS 2026-11-02, G4 PASS 2026-11-04, G5 PASS 2026-11-04. Ветка fix/73-describe-error-mask, draft PR #74. Код: 8be2d01 (реализация в backend/app/db/session.py, docstring health.py, menu_sync/__main__.py; тесты test_db_session.py, test_health.py, test_demo_data.py, test_seed.py, db/test_seed.py), a2688fd (маскирование по объединённым участкам — security LOW: обрывки пароля/IP), 0c0ac1c (сборка копии без пароля за O(n) — security LOW). Spec: docs/specs/feature-73-describe-error-mask.md; arch: docs/arch/feature-73-describe-error-mask.md (раздел «Реализация»).
+  - Прогон: unit 1494 passed; полный pytest 1780 passed, 3 skipped (Redis); db 286 passed; покрытие app/db/session.py 100% строк.
+  - Принятые остаточные риски: значения, слитые с буквами (`waiterdb`, `adminmin` при пароле `min` → `ad******`), порт по умолчанию, CNAME, IPv4 с ведущими нулями.
+  - Doc-sync после G4 выполнен 2026-11-04 (7ffa804): документы #60 (NFR-1, E-6, Security, TC-60-006, TC-60-010), traceability.
+  - G5 (2026-11-04): TC docs/test-cases/feature-73-describe-error-mask.md — 16 TC, PASS 16 (ручной TC-73-016); unit 1496 passed, db 286 passed локально; покрытие session.py 100% строк и ветвей; TC-60-006 и шаг 7 TC-60-010 перепрогнаны — PASS. Коммиты G5: cd8277d (тесты ветвей, перепрогон TC-60), e86675c (TC, трассировка, проверка хоста в test_menu_sync_cli.py), 0aa942b.
+  - Деплой (G6) не планируется.
+
 ## Ready to Deploy (#71)
 
 - #71 (выделено из #60: `/health/ready` 503 в prod при демо-заведении, AC-2) — kanban:ready-to-deploy, qa:passed, security:passed, G5 PASS 2026-10-29 (G4 PASS 2026-10-29), size:s. Код: коммит c2332c2 (backend/app/api/demo_data.py, deps.py, health.py, main.py; docstring app/seed/guard.py), security review — 1725f49, тесты G5 — 92affd0 (db/test_health_db.py: E-3, E-9); ветка feature/60-demo-seed-guard, PR #72. TC: docs/test-cases/feature-71-demo-data-readiness.md (14 TC, PASS 13; ручной TC-71-014 не выполнен). Прогон: unit 1448 passed, db 286 passed; покрытие demo_data.py, health.py, deps.py, main.py — 100% строк и ветвей. Spec: docs/specs/feature-60-demo-data-guard.md (AC-2, FR-3, FR-4, NFR-1…NFR-6, E-3, E-4, E-7…E-10); arch: docs/arch/feature-60-demo-data-guard.md («Реализация #71»). Doc-sync после G5 выполнен 2026-11-01.
@@ -37,7 +46,6 @@
 
 ## Backlog
 
-- #73 (bug, security, priority:medium) — `Database.describe_error` не скрывает хост, порт и пользователя из `DATABASE_URL` (LOW из security review #60/#71; затрагивает stderr сида, `DEMO_CHECK_FAILED`, `_check` компонента `database`).
 - #70 (bug, #63/#66, NFR-8 spec #8) — итог синхронизации меню не пишется в структурированный лог; фиксируется только строкой `menu_sync_runs`. Не блокирует G5.
 
 ## Ready to Deploy (группа feature #6)

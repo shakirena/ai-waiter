@@ -1,6 +1,6 @@
 # Traceability Matrix
 
-*Last updated: 2026-11-01 (doc-sync после G5 story #71)*
+*Last updated: 2026-11-04 (doc-sync после G5 bug #73)*
 
 | Feature | Story | ТЗ | Spec | Arch | Code (router/service) | Tests | TC Doc | Status |
 |---------|-------|----|------|------|------------------------|-------|--------|--------|
@@ -8,6 +8,7 @@
 | #7 Модель данных v1 | #48, #49, #50, #51, #52, #53, #54, #56 | раздел 7, 3.1–3.4 (FR-1…FR-21), 4.4–4.6 (INT-1…INT-7), 5 (AI-2), NFR-3, NFR-4, NFR-5, NFR-8, 9.2 | docs/specs/feature-7-data-model.md | docs/arch/feature-7-data-model.md | backend/app/db/, backend/app/models/, backend/app/seed/, backend/app/api/health.py, backend/alembic/ (0001–0004), backend/alembic.ini, .github/workflows/ci.yml | backend/tests/test_db_*.py, test_alembic_setup.py, test_models_metadata.py, test_migrations_offline.py, test_ids.py, test_order_status.py, test_seed.py, test_seed_loader.py, test_health.py, test_repo_artifacts.py, test_config.py, test_qa_coverage_gaps.py; backend/tests/db/*.py | docs/test-cases/feature-48..56-*.md (57 TC), docs/test-cases/traceability-tc.md | ✅ done (PR #57 влит, issue #7 закрыт); дефект #58 исправлен (PR #59) |
 | #8 Импорт меню из CSV/XLSX (файловый коннектор) | #61, #62, #63, #64, #65, #66, #67 | 1, 3.3 (FR-16, FR-17, FR-20), 4.2, 4.4, 4.5 (INT-1, INT-2; INT-3, INT-4 — потребители), 5 (AI-3), 6 (NFR-4, NFR-6, NFR-8), 9.2, приложение A.1–A.2, B (C-07) | docs/specs/feature-8-menu-import.md (FR-1…FR-8, NFR-1…NFR-10, AC-1…AC-7) | docs/arch/feature-8-menu-import.md (ADR-8.1…ADR-8.8) | backend/app/menu_sync/ (snapshot, report, plan, service, files/ — format, csv_reader, xlsx_reader, `__main__`), backend/app/schemas/money.py, backend/app/models/menu_sync.py, backend/app/models/enums.py (`MenuSyncSource`, `MenuSyncStatus`), backend/app/db/session.py (маскирование строки подключения), backend/alembic/versions/0005_menu_sync_runs.py, backend/pyproject.toml + uv.lock (`openpyxl`, `defusedxml`, ruff `banned-api`), README.md («Импорт меню из файла»), .gitignore (`local-data/`); касса: `php yii ai-export-menu` (репозиторий кассы) | backend/tests/test_money.py, test_menu_snapshot.py, test_menu_plan.py, test_menu_sync_runs.py, test_menu_csv.py, test_menu_xlsx.py, test_menu_sync_cli.py, test_import_boundaries.py; дополнены test_models_metadata.py, test_migrations_offline.py, test_db_session.py; backend/tests/db/test_menu_sync_apply.py, test_menu_sync_runs.py, test_menu_sync_cli.py; дополнены db/test_migrations.py, db/test_seed.py | docs/test-cases/feature-61..67-*.md (67 TC), docs/test-cases/traceability-tc.md | stories: ✅ ready-to-deploy (G5 PASS 2026-10-19, qa:passed, security:passed); feature: PR #69; дефект #70 (backlog) |
 | #60 Защита от демо-данных в боевой базе (из security review #53, TC-53-003) | #60, #71 | 6 (NFR-4, NFR-6, NFR-8), 9.1–9.3; 7 (мультиарендность) | docs/specs/feature-60-demo-data-guard.md (FR-1…FR-4, NFR-1…NFR-6, AC-1…AC-2, E-1…E-10) | docs/arch/feature-60-demo-data-guard.md (ADR-60.1…ADR-60.3); DEC-014; опирается на ADR-7.9, ADR-7.12, arch #6 | #60: backend/app/seed/guard.py, app/seed/`__main__`.py, app/seed/`__init__`.py, README.md (реализовано, коммит 4ff4749); #71: backend/app/api/demo_data.py, app/api/deps.py, app/api/health.py, app/main.py (реализовано, коммит c2332c2) | #60: backend/tests/test_seed_guard.py (новый), дополнены test_seed.py, tests/db/test_seed.py; #71: backend/tests/test_demo_data.py (новый), дополнены test_health.py, test_lifespan.py, tests/db/test_health_db.py (в G5 — E-3, E-9) | #60: docs/test-cases/feature-60-demo-seed-guard.md (TC-60-001…TC-60-010); #71: docs/test-cases/feature-71-demo-data-readiness.md (TC-71-001…TC-71-014); docs/test-cases/traceability-tc.md | #60: ✅ ready-to-deploy (G5 PASS 2026-10-28, qa:passed, security:passed; PR #72); #71: ✅ ready-to-deploy (G5 PASS 2026-10-29, qa:passed, security:passed; PR #72) |
+| #73 Маскирование DATABASE_URL в `describe_error` (bug из security review #60/#71, LOW) | #73 (сам issue — story) | 6 (NFR-4, NFR-6, NFR-8) | docs/specs/feature-73-describe-error-mask.md (FR-1…FR-5, NFR-1…NFR-4, AC-1, E-1…E-13) | docs/arch/feature-73-describe-error-mask.md (решения 1–7, без отдельного ADR); опирается на ADR-7.9, arch #60 (Security) | реализовано: backend/app/db/session.py (`_UrlSecrets`, `_url_secrets`, `_query_values`, `_host_values`, `_variants`, `_mask_message`, `_ip_spans`, `_replace_spans`, `_mask_ip_literals`; `Database.describe_error` переключён, `Database._mask` удалён); docstring: app/api/health.py, app/menu_sync/`__main__`.py; коммиты 8be2d01 (реализация), a2688fd (объединение участков маскирования, security LOW), 0c0ac1c (копия без пароля за один проход, security LOW) | backend/tests/test_db_session.py (тесты #73 без skip, 60 passed локально на Windows), дополнены test_health.py, test_demo_data.py, test_seed.py, tests/db/test_seed.py (`test_cli_wrong_password_is_not_shown`) | — (TC пишутся в G5); затронуты TC-60-006, TC-60-010 (шаг 7) | 🔄 testing (G4 PASS, security:passed; ветка `fix/73-describe-error-mask`, PR #74) |
 
 ## Детализация feature #7 по stories
 
@@ -89,7 +90,7 @@
 | Issue | Требование | TC | Описание | Статус |
 |-------|-----------|----|----------|--------|
 | #70 | NFR-8 spec | TC-63-* (журнал) | Итог синхронизации меню не пишется в структурированный лог: в `app/menu_sync` нет вызовов логгера, итог фиксируется только строкой `menu_sync_runs` | kanban:backlog, не блокирует G5 |
-| #73 | NFR-1 spec #60 (из security review #60/#71) | TC-60-006 | `Database.describe_error` маскирует только пароль: хост, порт и пользователь из текста ошибки драйвера возможны в stderr сида (код 1), в WARNING `DEMO_CHECK_FAILED` и в WARNING `_check` компонента `database` | kanban:backlog, не блокирует #60/#71 |
+| #73 | NFR-1 spec #60 (из security review #60/#71) | TC-60-006 | `Database.describe_error` маскировал только пароль: хост, порт и пользователь из текста ошибки драйвера были возможны в stderr сида (код 1), в WARNING `DEMO_CHECK_FAILED` и в WARNING `_check` компонента `database` | исправлено в ветке `fix/73-describe-error-mask` (8be2d01, a2688fd, 0c0ac1c), kanban:testing, security:passed; см. раздел «Bug #73» |
 
 ## Детализация feature #60 по stories
 
@@ -110,7 +111,7 @@
 | FR-2 — прежнее поведение сида (отказ в prod до подключения, идемпотентность на пустой базе и базе с демо) | #60; E-1, E-2, E-5 | ADR-60.1 (порядок проверок) | test_seed.py::test_prod_refusal_happens_before_target_check, test_exit_prod_forbidden_is_alias_of_exit_forbidden; test_seed_guard.py::test_ensure_seed_target_passes_for_empty_or_demo_only_base; db/test_seed.py::test_cli_twice_commits_same_data, test_guard_on_empty_base, test_guard_on_demo_only_base | #60: G5 PASS 2026-10-28 |
 | FR-3 — prod + демо → 503 `not_ready` и WARNING | #71 / AC-2 | ADR-60.2, ADR-60.3 | test_demo_data.py::test_found_logs_one_warning_and_repeat_is_silent, test_log_texts_have_no_connection_details; test_health.py::test_prod_demo_found_is_503_with_unchanged_body[single, scaled], test_prod_demo_warning_logged_once_for_repeated_polls, test_prod_openapi_has_no_demo_key; test_lifespan.py::test_lifespan_in_prod_refreshes_once_with_container_database; db/test_health_db.py::test_prod_with_demo_tenant_is_503_and_warns, test_prod_with_demo_and_real_tenant_is_503_and_warns (E-3), test_prod_demo_removed_between_polls_becomes_ready; запрос `demo_tenant_exists` — test_seed_guard.py::test_demo_tenant_exists_query (#60) | #71: G5 PASS 2026-10-29 |
 | FR-4 — вне prod проверка не выполняется | #71 | ADR-60.2 | test_health.py::test_demo_check_not_called_outside_prod[dev, test × single, scaled]; test_lifespan.py::test_lifespan_outside_prod_does_not_refresh | #71: G5 PASS 2026-10-29 |
-| NFR-1 — без строки подключения, пароля, хоста в выводе, логе и теле | #60, #71 | ADR-60.1, 60.2; раздел Security | #60: test_seed_guard.py::test_refusal_text_is_russian_without_connection_details, test_seed.py::test_database_error_in_target_check_is_exit_1_without_password; #71: test_demo_data.py::test_exception_is_unknown_with_masked_password, test_log_texts_have_no_connection_details; test_health.py::test_check_database_exception_logged_masked_without_traceback, test_ready_with_real_database_object_masks_password_in_log; db/test_health_db.py::test_prod_with_demo_tenant_is_503_and_warns (`caplog` без пароля), test_prod_with_unreachable_database_is_503_and_demo_warning_is_masked (пароль не в теле и не в WARNING) | #60: PASS для собственных текстов; #71: G5 PASS 2026-10-29; ограничение LOW — `describe_error` маскирует только пароль (хост/порт/пользователь из ошибки драйвера, с #7) — bug #73 (backlog) |
+| NFR-1 — без строки подключения, пароля, хоста в выводе, логе и теле | #60, #71 | ADR-60.1, 60.2; раздел Security | #60: test_seed_guard.py::test_refusal_text_is_russian_without_connection_details, test_seed.py::test_database_error_in_target_check_is_exit_1_without_password; #71: test_demo_data.py::test_exception_is_unknown_with_masked_password, test_log_texts_have_no_connection_details; test_health.py::test_check_database_exception_logged_masked_without_traceback, test_ready_with_real_database_object_masks_password_in_log; db/test_health_db.py::test_prod_with_demo_tenant_is_503_and_warns (`caplog` без пароля), test_prod_with_unreachable_database_is_503_and_demo_warning_is_masked (пароль не в теле и не в WARNING) | #60: PASS для собственных текстов; #71: G5 PASS 2026-10-29; ограничение LOW (`describe_error` маскировал только пароль, с #7) закрыто в #73 — тесты вызывающих дополнены проверкой отсутствия хоста и пользователя (G5 #73 — впереди) |
 | NFR-2 — одинаково в `single`/`scaled`, Windows/Linux, без Redis | #60, #71 | ADR-60.2 п. 5 | #60: только `AsyncSession`, unit в матрице CI Linux/Windows; #71: test_health.py::test_prod_demo_found_is_503_with_unchanged_body[scaled], test_prod_without_demo_is_ready[scaled], test_demo_check_not_called_outside_prod[*-scaled]; только `Database`, Redis не используется | #60: реализовано; #71: G5 PASS 2026-10-29 |
 | NFR-3 — без новых env и флага отключения; `DEMO_TENANT_ID` из `app.seed.data` | #60, #71 | ADR-60.1 | test_seed_guard.py::test_foreign_tenants_exist_query, test_demo_tenant_exists_query (параметр SQL = `DEMO_TENANT_ID`); #71 — флага отключения нет, условие только `APP_ENV=prod` | #60: реализовано; #71: G5 PASS 2026-10-29 |
 | NFR-4 — один `EXISTS` по PK, таймаут 2 с | #60, #71 | ADR-60.1, 60.2 («Стоимость») | test_seed_guard.py (скомпилированный SQL); #71: test_demo_data.py::test_timeout_is_unknown, test_driver_timeout_error_uses_describe_error; test_health.py::test_prod_demo_check_timeout_is_503, test_prod_demo_check_runs_concurrently_with_pings | #60: реализовано; #71: G5 PASS 2026-10-29 |
@@ -129,7 +130,7 @@
 | TC-60-003 | E-1, FR-2 | db/test_seed.py, test_seed_guard.py | PASS |
 | TC-60-004 | E-2, FR-2 | db/test_seed.py | PASS |
 | TC-60-005 | E-5, FR-2 | test_seed.py | PASS |
-| TC-60-006 | E-6, NFR-1 | test_seed.py, test_seed_guard.py, db/test_seed.py (`test_cli_without_schema_fails_with_hint`) | PASS (ограничение LOW `describe_error`) |
+| TC-60-006 | E-6, NFR-1; spec #73 NFR-1 | test_seed.py, test_seed_guard.py, db/test_seed.py (`test_cli_without_schema_fails_with_hint`, `test_cli_wrong_password_is_not_shown`), test_db_session.py (#73) | PASS (2026-10-28); ожидания расширены в #73 (нет хоста, порта, пользователя, базы); перепрогон в G5 #73 — PASS (2026-11-04, unit и db локально, шаг 7 TC-60-010 вручную) |
 | TC-60-007 | AC-1, NFR-1 | test_seed_guard.py, test_seed.py, db/test_seed.py (`_assert_refused`) | PASS |
 | TC-60-008 | FR-1, NFR-4 | test_seed.py, test_seed_guard.py | PASS |
 | TC-60-009 | E-10, NFR-2, NFR-3, NFR-6 | test_seed.py::test_foreign_tenants_refusal_is_same_in_both_modes; матрица CI | PASS (Windows локально; Linux — по CI PR #72) |
@@ -145,7 +146,7 @@
 |----|-------------------------------|--------------|--------|
 | TC-71-001 | AC-2, FR-3 | db/test_health_db.py, test_health.py | PASS |
 | TC-71-002 | AC-2, ADR-60.3 | test_health.py | PASS |
-| TC-71-003 | AC-2, NFR-1 | test_demo_data.py, test_health.py | PASS (ограничение LOW `describe_error`, #73) |
+| TC-71-003 | AC-2, NFR-1 | test_demo_data.py, test_health.py | PASS (ограничение LOW `describe_error` закрыто в #73) |
 | TC-71-004 | E-7, FR-4 | test_health.py, test_lifespan.py | PASS |
 | TC-71-005 | E-4, E-8 | db/test_health_db.py, test_health.py | PASS |
 | TC-71-006 | E-9, NFR-5 | test_health.py, test_lifespan.py, db/test_health_db.py::test_prod_with_unreachable_database_is_503_and_demo_warning_is_masked (G5) | PASS |
@@ -159,3 +160,57 @@
 | TC-71-014 | AC-2, E-8, E-10 | — (ручной) | НЕ ВЫПОЛНЕН |
 
 Итог G5 #71: 14 TC, PASS 13 (ручной TC-71-014 не выполнен). Прогон: unit 1448 passed, db 286 passed; покрытие `app/api/demo_data.py`, `app/api/health.py`, `app/api/deps.py`, `app/main.py` — 100% строк и ветвей. Для G6: ручной TC-71-014 (настоящий `python -m app` в prod на Windows, `single`); пункт чек-листа «`APP_ENV=prod` на боевом сервере»; Security LOW — `/health/ready` без rate-limit (отдельная задача), маскирование host/user — #73.
+
+## Bug #73: требования → arch → код → тесты
+
+Состояние на G4 (2026-11-04): реализовано в `backend/app/db/session.py` (коммиты 8be2d01, a2688fd, 0c0ac1c), security review PASS. Два замечания LOW исправлены в той же ветке: a2688fd — пересекающиеся участки объединяются, хвостов `ad***`/`192.0.2.***` нет; 0c0ac1c — копия текста без пароля собирается за один проход. Тесты в `backend/tests/test_db_session.py` без skip (60 passed локально на Windows), без маркеров `db`/`scaled`. Схема БД, миграции, API, конфигурация и места вызова `describe_error` не менялись. TC #73 пишутся в G5. Пути тестов — относительно `backend/`.
+
+| Требование (spec) | Решение arch #73 | Код | Тесты | Состояние |
+|-------------------|------------------|-----|-------|-----------|
+| FR-1 — маскируются хост, явный порт, пользователь, база, пароль, значения query `host`/`port`/`user`/`password`/`database`/`passfile`, любые литералы IP; варианты `raw`, `quote`, `quote_plus` | 1, 2, 4 | `_url_secrets` (`_query_values`, `_host_values`, `_variants`), `_mask_message`, `_ip_spans` | test_db_session.py::test_describe_error_masks_all_url_parts (AC-1), ::test_describe_error_masks_query_hosts_ports_and_password, ::test_describe_error_masks_query_user_database_and_passfile, ::test_describe_error_masks_resolved_ip_literals, ::test_url_secrets_cover_asyncpg_connect_args (оракул `PGDialect_asyncpg().create_connect_args`) | реализовано |
+| FR-2 — имена типов, ` <- ` и остальной текст сохраняются; граница токена `\w`, длинные значения первыми | 2, 3 | `_mask_message` (на каждое `str(exc)` отдельно), `_replace_spans` | test_db_session.py::test_describe_error_keeps_exception_type_names, ::test_describe_error_masks_each_message_in_cause_chain, ::test_describe_error_does_not_mask_other_query_values; прежние test_describe_error_masks_url_encoded_password, test_describe_error_follows_implicit_context_once | реализовано |
+| FR-3 — URL без пароля: остальное маскируется | 1 | `_url_secrets` | test_db_session.py::test_describe_error_url_without_password (E-8) | реализовано |
+| FR-4 — неразбираемый URL → `UNPARSABLE_URL_TEXT` (в т. ч. ошибка внутри `_url_secrets`) | 6 | `Database.describe_error` (`try` вокруг `make_url` и `_url_secrets`) | test_db_session.py::test_describe_error_with_unparsable_url_hides_text (E-11), ::test_describe_error_url_secrets_failure_is_fail_closed | реализовано |
+| FR-5 — сигнатура и места вызова не меняются | Module Structure | `Database.describe_error`; `Database._mask` удалён | test_health.py::test_ready_with_real_database_object_masks_password_in_log, ::test_check_database_exception_logged_masked_without_traceback; test_demo_data.py::test_exception_is_unknown_with_masked_password; test_seed.py::test_database_error_in_target_check_is_exit_1_without_password — дополнены проверкой отсутствия хоста и пользователя | реализовано |
+| NFR-1 — ни одного значения из `DATABASE_URL`, кроме схемы и драйвера, в логе, stderr сида и отчёте `menu_sync` | Security | `describe_error`; docstring `ping`, `app/api/health.py`, `app/menu_sync/__main__.py` | test_db_session.py::test_describe_error_masks_whole_url_leaving_scheme (E-10), ::test_ping_failure_returns_false_and_masks_password (`db.invalid`, `ai_waiter`); db/test_seed.py::test_cli_wrong_password_is_not_shown (хост и пользователь из `TEST_DATABASE_URL`) | реализовано; db-тест — в Linux-джобе `backend-services` |
+| NFR-2 — одинаково в `single`/`scaled`, Windows/Linux | — | только `session.py`, без зависимости от ОС | unit в матрице CI Linux/Windows | реализовано (локально Windows PASS; Linux — по CI PR #74) |
+| NFR-3 — unit без БД, адреса только из документационных диапазонов | Тесты | — | test_db_session.py (`192.0.2.0/24`, `2001:db8::/32`, `*.example.com`, `*.invalid`) | соответствует |
+| NFR-4 — работа только на пути ошибки | 7 | `describe_error` (разбор URL при вызове) | — (проверено ревью) | соответствует |
+| E-1 — порт по умолчанию не маскируется, явный (даже `5432`) — маскируется | 5 | `_url_secrets` | test_db_session.py::test_describe_error_does_not_mask_default_port, ::test_describe_error_masks_explicit_default_port | реализовано |
+| E-2, E-3 — совпадающие значения и подстроки | 2 | `_mask_message`, `_replace_spans` | test_db_session.py::test_describe_error_overlapping_values_masked_without_tails, ::test_describe_error_password_inside_other_values_leaves_no_tails | реализовано |
+| E-4 — короткие значения внутри слов, `ai-waiter` → `ai-***`, `15432` | 3 | `_mask_message` | test_db_session.py::test_describe_error_token_boundaries | реализовано (остаточный риск `waiterdb` принят) |
+| E-5 — домен целиком, без учёта регистра | 3, 4 | `_mask_message` (`re.IGNORECASE`) | test_db_session.py::test_describe_error_tokens_are_case_insensitive_password_is_not | реализовано |
+| E-6 — IPv6 в скобках | 2, 4 | `_host_values`, `_ip_spans` | test_db_session.py::test_describe_error_masks_ipv6_host_in_brackets, ::test_describe_error_masks_query_hosts_ports_and_password | реализовано |
+| E-7 — хост и порт в query, `?user=`, `?password=`, `?database=` | 1 | `_url_secrets` | test_db_session.py::test_describe_error_masks_query_hosts_ports_and_password, ::test_describe_error_masks_query_user_database_and_passfile, ::test_describe_error_masks_multihost_netloc, ::test_describe_error_masks_unix_socket_path | реализовано |
+| E-8 — URL без пароля | 1 | `_url_secrets` | test_db_session.py::test_describe_error_url_without_password | реализовано |
+| E-9 — URL-кодированные значения | 2 | `_variants` | test_db_session.py::test_describe_error_masks_url_encoded_user_and_database, ::test_describe_error_masks_url_encoded_password | реализовано |
+| E-10 — вся строка подключения | 1–3 | `_mask_message` | test_db_session.py::test_describe_error_masks_whole_url_leaving_scheme | реализовано |
+| E-11 — неразбираемый URL | 6 | `describe_error` | test_db_session.py::test_describe_error_with_unparsable_url_hides_text | реализовано |
+| E-12 — пустое сообщение, цикл в цепочке | — | `describe_error` | test_db_session.py::test_describe_error_without_password_and_empty_message, ::test_describe_error_follows_implicit_context_once | реализовано |
+| E-13 — литералы IPv4/IPv6 (разрешённый IP), `12:30:45` и `1.2.300.4` не трогаются | 4 | `_ip_spans`, `_mask_ip_literals` | test_db_session.py::test_mask_ip_literals (параметризованный), ::test_describe_error_masks_resolved_ip_literals | реализовано |
+| AC-1 — пример из spec: все пять значений → `***` | 1–3 | `describe_error` | test_db_session.py::test_describe_error_masks_all_url_parts | реализовано |
+
+Обновлено после G4: spec #60 (NFR-1, E-6), arch #60 (Security), docs/test-cases/feature-60-demo-seed-guard.md (TC-60-006, TC-60-010 шаг 7), строки TC-60-006 и TC-71-003 в docs/test-cases/traceability-tc.md, строки #73, NFR-1 #60, TC-60-006 и TC-71-003 выше. Следующий шаг — G5: TC #73 и перепрогон TC-60-006.
+
+### G5 #73 (2026-11-04): TC → требования
+
+TC: docs/test-cases/feature-73-describe-error-mask.md — 16 TC, PASS 16 (ручной TC-73-016). Прогон: unit 1496 passed, db 286 passed (локально Windows, PostgreSQL 16), CI PR #74 зелёный; покрытие `app/db/session.py` 100% строк и ветвей. Тесты G5: test_db_session.py::test_describe_error_masks_query_ipv6_host_without_port (E-6, E-7), ::test_describe_error_with_password_only_masks_password_and_ip_literals (FR-1, E-13); проверка хоста в test_menu_sync_cli.py::test_import_database_error_hides_password (FR-5, NFR-1).
+
+| TC | Требования |
+|----|------------|
+| TC-73-001 | AC-1, FR-1 |
+| TC-73-002 | E-10, NFR-1 |
+| TC-73-003 | FR-1 (хост), E-5, E-6 |
+| TC-73-004 | E-1 |
+| TC-73-005 | FR-1 (query), E-7 |
+| TC-73-006 | E-9 |
+| TC-73-007 | E-13 |
+| TC-73-008 | FR-2, FR-5, E-12 |
+| TC-73-009 | FR-2, E-2, E-3, E-4 |
+| TC-73-010 | Security review LOW (a2688fd, 0c0ac1c) |
+| TC-73-011 | FR-3, E-8 |
+| TC-73-012 | FR-4, E-11 |
+| TC-73-013 | FR-5, NFR-1 (health, demo_data, seed, menu_sync) |
+| TC-73-014 | NFR-2, NFR-3, NFR-4 |
+| TC-73-015 | регрессия TC-60-006, TC-60-010 шаг 7 |
+| TC-73-016 | AC-1, NFR-1, NFR-2 (ручной, Windows `single`) |

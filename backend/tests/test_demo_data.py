@@ -137,6 +137,8 @@ async def test_exception_is_unknown_with_masked_password(query: DemoQuery, caplo
     assert "ConnectionRefusedError" in message
     assert "***" in message
     assert "pw-s3cret" not in message
+    assert "db.invalid" not in message
+    assert "ai_waiter" not in message
     assert record.exc_info is None
     assert record.component == "demo_data"  # type: ignore[attr-defined]
 

@@ -607,6 +607,7 @@ def test_import_database_error_hides_password(
     assert code == cli.EXIT_ERROR
     assert out == ""
     assert PASSWORD not in err
+    assert "db.invalid" not in err  # #73: хост из DATABASE_URL тоже маскируется
     assert "Не удалось выполнить импорт меню: ConnectionRefusedError" in err
     assert "***" in err
     assert "alembic upgrade head" in err

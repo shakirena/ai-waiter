@@ -236,6 +236,8 @@ async def test_ready_with_real_database_object_masks_password_in_log(
     messages = [rec.getMessage() for rec in caplog.records]
     assert any("ConnectionRefusedError" in message for message in messages)
     assert all("pw-s3cret" not in message for message in messages)
+    assert all("db.invalid" not in message for message in messages)
+    assert all("ai_waiter" not in message for message in messages)
     assert all(rec.exc_info is None for rec in caplog.records if rec.name in {"app.db.session", "app.api.health"})
 
 
@@ -428,6 +430,8 @@ async def test_check_database_exception_logged_masked_without_traceback(
     assert "ConnectionRefusedError" in message
     assert "***" in message
     assert "pw-s3cret" not in message
+    assert "db.invalid" not in message
+    assert "ai_waiter" not in message
 
 
 def test_exception_names_follow_cause_chain_without_messages() -> None:

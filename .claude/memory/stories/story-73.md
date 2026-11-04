@@ -41,3 +41,13 @@
 **Заметки:** часть `?host=` без скобок с двумя и более `:` считается IPv6 без порта (не разбивается на `h:p`), иначе последняя группа (`1`) стала бы токеном-портом. Документы #60 не трогались — doc-sync.
 
 ---
+
+## 🔒 Security Review (security-reviewer)
+
+**Verdict:** PASS (2026-11-04), метка `security:passed`. Отчёт: https://github.com/shakirena/ai-waiter/issues/73#issuecomment-6623578910
+**Файлы:** backend/app/db/session.py, backend/app/api/health.py, backend/app/menu_sync/__main__.py, тесты test_db_session/test_health/test_demo_data/test_seed/db/test_seed
+**Findings:** CRITICAL 0 · HIGH 0 · MEDIUM 0 · LOW 1 · INFO 2
+**Заметки:**
+- LOW: проходы маскирования идут последовательно, поэтому при пароле, который входит подстрокой в пользователя, хост или IP, остаются фрагменты (`ad***`, `192.0.2.***`). Исправление — объединить интервалы всех детекторов и заменить за один проход.
+- INFO: IPv4 с ведущими нулями `ipaddress` не принимает, и он не маскируется. Остаточные риски из arch приняты.
+- Мультихост в userinfo и нечисловой порт дают `UNPARSABLE_URL_TEXT` (fail-closed). ReDoS нет: замер на 10^6 символов ≤ 0,2 с.

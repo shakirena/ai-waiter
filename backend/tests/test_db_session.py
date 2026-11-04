@@ -261,6 +261,26 @@ def test_describe_error_overlapping_values_masked_without_tails(url: str, messag
     assert _database(url).describe_error(RuntimeError(message)) == f"RuntimeError: {expected}"
 
 
+@pytest.mark.parametrize(
+    ("url", "message", "expected"),
+    [
+        # Security review #73 (LOW): пароль — часть пользователя или IP; хвостов ad*** и 192.0.2.*** нет.
+        ("postgresql+asyncpg://admin:min@db.example.com/x", 'role "admin" failed', 'role "***" failed'),
+        (
+            "postgresql+asyncpg://u:10@192.0.2.10/x",
+            "Connect call failed ('192.0.2.10', 5432)",
+            "Connect call failed ('***', 5432)",
+        ),
+        # Пароль вплотную к токену: токен ищется и в копии с вырезанным паролем.
+        ("postgresql+asyncpg://admin:pw-s3cret@db.example.com/x", "adminpw-s3cret", "******"),
+        # Пароль внутри домена, домен — токен целиком.
+        ("postgresql+asyncpg://u:example@db.example.com/x", "host db.example.com", "host ***"),
+    ],
+)
+def test_describe_error_password_inside_other_values_leaves_no_tails(url: str, message: str, expected: str) -> None:
+    assert _database(url).describe_error(RuntimeError(message)) == f"RuntimeError: {expected}"
+
+
 def test_describe_error_token_boundaries() -> None:
     """E-4: отдельный токен через дефис маскируется, значение внутри числа или слова — нет."""
     db = _database("postgresql+asyncpg://u:pw@db.example.com:5432/waiter")

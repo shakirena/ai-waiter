@@ -128,15 +128,27 @@ def _variants(values: Iterable[str | None]) -> tuple[str, ...]:
 def _mask_message(message: str, secrets: _UrlSecrets) -> str:
     """Замаскировать одно сообщение исключения (без имени типа) — решение 3–4 arch #73.
 
-    Порядок: (1) ``secrets.substrings`` — ``str.replace``, длинные первыми; (2) ``secrets.tokens`` —
+    Совпадения ищутся по исходному тексту: (1) ``secrets.substrings`` — подстроки; (2) ``secrets.tokens`` —
     одно регулярное выражение ``(?<!\\w)(?:t1|t2|…)(?!\\w)`` с ``re.escape``, длинные первыми,
-    ``re.IGNORECASE``, один проход; (3) ``_mask_ip_literals``. Результат — ``***`` вместо значений."""
+    ``re.IGNORECASE``; (3) литералы IP (``_ip_spans``). Токены и IP ищутся ещё и в копии, где пароль
+    заменён небуквенными символами (``adminpw`` при пароле ``pw`` → токен ``admin``). Пересекающиеся
+    участки объединяются и заменяются на ``***`` за один проход, поэтому пароль, совпавший с частью
+    пользователя или IP, не оставляет хвостов (``ad***``, ``192.0.2.***`` — security review #73, LOW)."""
+    spans: list[tuple[int, int]] = []
     for secret in secrets.substrings:
-        message = message.replace(secret, _MASK)
+        spans.extend(match.span() for match in re.finditer(re.escape(secret), message))
+    hidden = message
+    for begin, end in spans:
+        hidden = hidden[:begin] + "\0" * (end - begin) + hidden[end:]
+    token_pattern = None
     if secrets.tokens:
-        pattern = "|".join(re.escape(token) for token in sorted(secrets.tokens, key=len, reverse=True))
-        message = re.sub(rf"(?<!\w)(?:{pattern})(?!\w)", _MASK, message, flags=re.IGNORECASE)
-    return _mask_ip_literals(message)
+        alternatives = "|".join(re.escape(token) for token in sorted(secrets.tokens, key=len, reverse=True))
+        token_pattern = re.compile(rf"(?<!\w)(?:{alternatives})(?!\w)", re.IGNORECASE)
+    for variant in {message, hidden}:
+        if token_pattern is not None:
+            spans.extend(match.span() for match in token_pattern.finditer(variant))
+        spans.extend(_ip_spans(variant))
+    return _replace_spans(message, spans)
 
 
 def _mask_ip_literals(text: str) -> str:
@@ -145,8 +157,35 @@ def _mask_ip_literals(text: str) -> str:
     Кандидаты ищутся регулярными выражениями и подтверждаются ``ipaddress.ip_address`` — строки вида
     ``12:30:45`` или ``1.2.300.4`` не трогаются. Нужно для случая «в URL домен, а драйвер печатает
     разрешённый IP»: ``Connect call failed ('192.0.2.10', 5432)``."""
-    text = _IPV6_CANDIDATE.sub(_mask_ipv6_candidate, text)
-    return _IPV4_CANDIDATE.sub(_mask_ipv4_candidate, text)
+    return _replace_spans(text, _ip_spans(text))
+
+
+def _ip_spans(text: str) -> Iterator[tuple[int, int]]:
+    """Участки текста с литералами IPv6 и IPv4. У кандидата IPv6 хвостовые точки (конец предложения)
+    и одиночное ``:`` (``…::7: x``) в участок не входят."""
+    for match in _IPV6_CANDIDATE.finditer(text):
+        body = match.group().rstrip(".")
+        if body.endswith(":") and not body.endswith("::"):
+            body = body[:-1]
+        if body.count(":") >= 2 and _is_ip(body):
+            yield match.start(), match.start() + len(body)
+    for match in _IPV4_CANDIDATE.finditer(text):
+        if _is_ip(match.group()):
+            yield match.span()
+
+
+def _replace_spans(text: str, spans: Iterable[tuple[int, int]]) -> str:
+    """Заменить участки на ``***``; пересекающиеся участки объединяются в один."""
+    pieces: list[str] = []
+    position = 0  # конец последнего замаскированного участка
+    for begin, end in sorted(spans):
+        if begin < position:  # пересекается с уже замаскированным участком — расширить его
+            position = max(position, end)
+            continue
+        pieces.extend((text[position:begin], _MASK))
+        position = end
+    pieces.append(text[position:])
+    return "".join(pieces)
 
 
 def _is_ip(value: str) -> bool:
@@ -155,21 +194,6 @@ def _is_ip(value: str) -> bool:
     except ValueError:
         return False
     return True
-
-
-def _mask_ipv6_candidate(match: re.Match[str]) -> str:
-    """Кандидат IPv6; хвостовые точки (конец предложения) и одиночное ``:`` (``…::7: x``) остаются в тексте."""
-    candidate = match.group()
-    body = candidate.rstrip(".")
-    if body.endswith(":") and not body.endswith("::"):
-        body = body[:-1]
-    if body.count(":") >= 2 and _is_ip(body):
-        return _MASK + candidate[len(body) :]
-    return candidate
-
-
-def _mask_ipv4_candidate(match: re.Match[str]) -> str:
-    return _MASK if _is_ip(match.group()) else match.group()
 
 
 class Database:

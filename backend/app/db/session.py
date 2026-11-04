@@ -137,9 +137,10 @@ def _mask_message(message: str, secrets: _UrlSecrets) -> str:
     spans: list[tuple[int, int]] = []
     for secret in secrets.substrings:
         spans.extend(match.span() for match in re.finditer(re.escape(secret), message))
-    hidden = message
+    chars = list(message)
     for begin, end in spans:
-        hidden = hidden[:begin] + "\0" * (end - begin) + hidden[end:]
+        chars[begin:end] = "\0" * (end - begin)
+    hidden = "".join(chars)
     token_pattern = None
     if secrets.tokens:
         alternatives = "|".join(re.escape(token) for token in sorted(secrets.tokens, key=len, reverse=True))

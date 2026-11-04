@@ -417,3 +417,20 @@ def test_url_secrets_cover_asyncpg_connect_args(url: str) -> None:
             else:
                 assert str(value) in secrets.tokens, (key, value)
     assert checked >= 3
+
+
+def test_describe_error_masks_query_ipv6_host_without_port() -> None:
+    """E-6, E-7: ``?host=[2001:db8::3]`` без порта — адрес маскируется, остальной текст сохранён (G5 #73)."""
+    db = _database("postgresql+asyncpg://w:pw@/x?host=[2001:db8::3]")
+    secrets = _url_secrets(make_url("postgresql+asyncpg://w:pw@/x?host=[2001:db8::3]"))
+    assert "2001:db8::3" in secrets.tokens
+    assert db.describe_error(OSError("cannot reach 2001:db8::3 for w")) == "OSError: cannot reach *** for ***"
+
+
+def test_describe_error_with_password_only_masks_password_and_ip_literals() -> None:
+    """FR-1, E-13: в URL только пароль (нет пользователя, хоста, порта и базы) — токенов нет,
+    маскируются пароль и литералы IP, остальной текст не меняется (G5 #73)."""
+    url = "postgresql+asyncpg://:only-pw@"
+    assert _url_secrets(make_url(url)).tokens == ()
+    db = _database(url)
+    assert db.describe_error(OSError("bad only-pw at 192.0.2.7 for user x")) == "OSError: bad *** at *** for user x"

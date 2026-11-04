@@ -1,4 +1,4 @@
-﻿# Test Cases: Story #73 — Маскирование DATABASE_URL в describe_error
+# Test Cases: Story #73 — Маскирование DATABASE_URL в describe_error
 
 **Feature:** #73 (type:bug, сам issue и есть story) — `describe_error` раскрывает детали подключения из DATABASE_URL
 **Spec:** docs/specs/feature-73-describe-error-mask.md (AC-1, FR-1…FR-5, NFR-1…NFR-4, E-1…E-13)

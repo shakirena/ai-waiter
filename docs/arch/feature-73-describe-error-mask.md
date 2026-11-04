@@ -109,6 +109,8 @@
 
 ## Module Structure (code stubs)
 
+*Состояние на G2. Стабы реализованы и подключены, фактическая структура описана в разделе «Реализация»: `_mask_message` использует `_ip_spans` и `_replace_spans`, а `_mask_ip_literals` осталась обёрткой над ними.*
+
 ```
 backend/app/db/session.py
   _UrlSecrets(substrings: tuple[str, ...], tokens: tuple[str, ...])   # dataclass(frozen, slots) — СТАБ

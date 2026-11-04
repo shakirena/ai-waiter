@@ -6,18 +6,20 @@
 
 ## Ready for Dev
 
-- #73 (bug, security, priority:medium, size:s) — `describe_error` раскрывает детали подключения из `DATABASE_URL`. G1 и G2 PASS 2026-11-02. Ветка fix/73-describe-error-mask, draft PR #74. Spec: docs/specs/feature-73-describe-error-mask.md (FR-1…FR-5, NFR-1…NFR-4, AC-1, E-1…E-13); arch: docs/arch/feature-73-describe-error-mask.md (без ADR). Стабы: `_UrlSecrets`, `_url_secrets`, `_mask_message`, `_mask_ip_literals` в backend/app/db/session.py; 5 тестов-заготовок со skip в tests/test_db_session.py. Прототип алгоритма architect — в scratchpad сессии (вне репозитория).
-  - Решения: пароль — подстрокой; хост/порт/пользователь/база и `?host/port/user/password/database/passfile` — токенами `(?<!\w)…(?!\w)`, без учёта регистра; любые литералы IPv4/IPv6 маскируются по шаблону (E-13); порт по умолчанию не маскируется; `UNPARSABLE_URL_TEXT` без изменений.
-  - После G4 обновить: NFR-1 и E-6 spec #60, Security arch #60, TC-60-006 и шаг 7 TC-60-010, traceability.
-  - Деплой (G6) не планируется.
+*(пусто)*
 
 ## In Development (WIP: 0/5)
 
 *(пусто)*
 
-## In Testing (WIP: 0/5)
+## In Testing (WIP: 1/5)
 
-*(пусто)*
+- #73 (bug, security, priority:medium, size:s) — `describe_error` раскрывает детали подключения из `DATABASE_URL`. kanban:testing, security:passed. G3 PASS 2026-11-02, G4 PASS 2026-11-04. Ветка fix/73-describe-error-mask, draft PR #74. Код: 8be2d01 (реализация в backend/app/db/session.py, docstring health.py, menu_sync/__main__.py; тесты test_db_session.py, test_health.py, test_demo_data.py, test_seed.py, db/test_seed.py), a2688fd (маскирование по объединённым участкам — security LOW: обрывки пароля/IP), 0c0ac1c (сборка копии без пароля за O(n) — security LOW). Spec: docs/specs/feature-73-describe-error-mask.md; arch: docs/arch/feature-73-describe-error-mask.md (раздел «Реализация»).
+  - Прогон: unit 1494 passed; полный pytest 1780 passed, 3 skipped (Redis); db 286 passed; покрытие app/db/session.py 100% строк.
+  - Принятые остаточные риски: значения, слитые с буквами (`waiterdb`, `adminmin` при пароле `min` → `ad******`), порт по умолчанию, CNAME, IPv4 с ведущими нулями.
+  - Doc-sync после G4 выполнен 2026-11-04 (7ffa804): документы #60 (NFR-1, E-6, Security, TC-60-006, TC-60-010), traceability.
+  - Для G5: TC #73, перепрогон TC-60-006, по желанию ручной шаг 7 TC-60-010; db-тест test_cli_wrong_password_is_not_shown — в Linux-джобе `backend-services` (CI PR #74).
+  - Деплой (G6) не планируется.
 
 ## Ready to Deploy (#71)
 

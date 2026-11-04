@@ -1,6 +1,6 @@
 # Test Case Traceability Matrix
 
-Обновлено: 2026-10-29. Feature #6 «Каркас проекта» (stories #37–#45, прогон 2026-10-02), feature #7 «Модель данных v1 и миграции Alembic» (stories #48–#54, #56, прогон 2026-10-12, финальный прогон G5 2026-10-13), feature #8 «Импорт меню из CSV/XLSX» (stories #61–#67, прогон 2026-10-19) и защита от демо-данных (story #60, прогон 2026-10-28; story #71, прогон 2026-10-29). Столбец «Авто» — где тест выполняется автоматически (для #7 и #8 пути относительно `backend/tests/`, `db/` — тесты с маркером `db`, нужен PostgreSQL); «Прогон» — результат на дату прогона.
+Обновлено: 2026-11-04. Feature #6 «Каркас проекта» (stories #37–#45, прогон 2026-10-02), feature #7 «Модель данных v1 и миграции Alembic» (stories #48–#54, #56, прогон 2026-10-12, финальный прогон G5 2026-10-13), feature #8 «Импорт меню из CSV/XLSX» (stories #61–#67, прогон 2026-10-19), защита от демо-данных (story #60, прогон 2026-10-28; story #71, прогон 2026-10-29) и маскирование `DATABASE_URL` в `describe_error` (story #73, прогон 2026-11-04). Столбец «Авто» — где тест выполняется автоматически (для #7 и #8 пути относительно `backend/tests/`, `db/` — тесты с маркером `db`, нужен PostgreSQL); «Прогон» — результат на дату прогона.
 
 ## Feature #6 — Каркас проекта
 
@@ -292,3 +292,56 @@
 - #60 → #71: гонка сида (ADR-60.1, Notes TC-60-008) обнаруживается TC-71-001, TC-71-012; E-3 и E-4 — сид в TC-60-002, TC-60-001, приложение в TC-71-012, TC-71-005
 - #56 → #71: проверка `database` и таймаут 2 с (TC-56-001…TC-56-003) — регрессия в TC-71-006, TC-71-011; запись ошибок `_check` без traceback — TC-71-003
 - #37 → #71: TC-37-005 (Redis в `/health/ready`) — ошибка Redis в логе теперь только именами классов (TC-71-003)
+
+## Маскирование DATABASE_URL в describe_error — story #73
+
+Прогон 2026-11-04: локально (Windows) `uv run pytest -q -m "not db and not scaled"` — 1494 passed; db-тесты локально (PostgreSQL 16) — 286 passed; покрытие `app/db/session.py` 100% строк и ветвей (1496 unit после тестов G5); Linux — CI PR #74 зелёный; ручной TC-73-016 — PASS. Полные списки тестов и шаги — в `docs/test-cases/feature-73-describe-error-mask.md`.
+
+| TC ID | Title | Feature | AC | Priority | E2E Automated | Авто (unit/static) | Прогон |
+|-------|-------|---------|-----|----------|---------------|--------------------|--------|
+| TC-73-001 | Все значения из DATABASE_URL → `***`, тип и текст сохранены | #73 | AC-1, FR-1, FR-2, NFR-1 | Critical | No | test_db_session.py::test_describe_error_masks_all_url_parts, ::test_ping_failure_returns_false_and_masks_password | PASS |
+| TC-73-002 | Строка подключения целиком — только схема и драйвер | #73 | E-10, FR-2 | Critical | No | test_db_session.py::test_describe_error_masks_whole_url_leaving_scheme | PASS |
+| TC-73-003 | Хост: домен, регистр, IPv6 в скобках, список хостов, сокет | #73 | FR-1, E-5, E-6 | High | No | test_db_session.py::test_describe_error_tokens_are_case_insensitive_password_is_not, ::test_describe_error_masks_ipv6_host_in_brackets, ::test_describe_error_masks_multihost_netloc, ::test_describe_error_masks_unix_socket_path | PASS |
+| TC-73-004 | Порт: явный маскируется (даже 5432), по умолчанию — нет | #73 | FR-1, E-1 | High | No | test_db_session.py::test_describe_error_does_not_mask_default_port, ::test_describe_error_masks_explicit_default_port, ::test_describe_error_token_boundaries | PASS |
+| TC-73-005 | Query: host, port, user, password, database, passfile | #73 | FR-1, E-7 | Critical | No | test_db_session.py::test_describe_error_masks_query_hosts_ports_and_password, ::test_describe_error_masks_query_user_database_and_passfile, ::test_describe_error_does_not_mask_other_query_values, ::test_url_secrets_cover_asyncpg_connect_args | PASS |
+| TC-73-006 | URL-кодированные пароль, пользователь и база | #73 | FR-1, E-9 | High | No | test_db_session.py::test_describe_error_masks_url_encoded_password, ::test_describe_error_masks_url_encoded_user_and_database | PASS |
+| TC-73-007 | Литералы IPv4/IPv6 в тексте; время и версии не трогаются | #73 | E-13, FR-1 | Critical | No | test_db_session.py::test_describe_error_masks_resolved_ip_literals, ::test_mask_ip_literals | PASS |
+| TC-73-008 | Имена типов, ` <- `, цепочка причин без зацикливания | #73 | FR-2, FR-5, E-12 | High | No | test_db_session.py::test_describe_error_keeps_exception_type_names, ::test_describe_error_masks_each_message_in_cause_chain, ::test_describe_error_follows_implicit_context_once, ::test_describe_error_without_password_and_empty_message | PASS |
+| TC-73-009 | Границы токенов и пересечения без хвостов | #73 | E-2, E-3, E-4, FR-2 | High | No | test_db_session.py::test_describe_error_overlapping_values_masked_without_tails, ::test_describe_error_token_boundaries | PASS |
+| TC-73-010 | Пароль внутри других значений — без `ad***`, `192.0.2.***` (security review LOW) | #73 | NFR-1, FR-1 | High | No | test_db_session.py::test_describe_error_password_inside_other_values_leaves_no_tails | PASS |
+| TC-73-011 | URL без пароля — хост, пользователь, база маскируются | #73 | FR-3, E-8 | High | No | test_db_session.py::test_describe_error_url_without_password | PASS |
+| TC-73-012 | Неразбираемый URL / сбой разбора — UNPARSABLE_URL_TEXT | #73 | FR-4, E-11 | Critical | No | test_db_session.py::test_describe_error_with_unparsable_url_hides_text, ::test_describe_error_url_secrets_failure_is_fail_closed; test_menu_sync_cli.py::test_unparsable_database_url_is_exit_1_without_password | PASS |
+| TC-73-013 | Вызывающие (health, demo_data, seed, menu_sync) без деталей подключения | #73 | FR-5, NFR-1 | Critical | No | test_health.py::test_ready_with_real_database_object_masks_password_in_log, ::test_check_database_exception_logged_masked_without_traceback; test_demo_data.py::test_exception_is_unknown_with_masked_password; test_seed.py::test_database_error_in_target_check_is_exit_1_without_password; test_menu_sync_cli.py::test_import_database_error_hides_password, ::test_database_error_text_is_escaped_and_limited; db/test_seed.py::test_cli_wrong_password_is_not_shown | PASS |
+| TC-73-014 | Переносимость, тестовые адреса, стоимость | #73 | NFR-2, NFR-3, NFR-4 | Medium | No | test_db_session.py (матрица CI Windows/Linux), ::test_ping_ok; чтение кода session.py | PASS (локально Windows; Linux — CI PR #74) |
+| TC-73-015 | Регрессия TC-60-006 и TC-60-010 шаг 7 | #73, #60 | NFR-1; spec #60 E-6 | High | No | test_seed.py::test_database_error_in_target_check_is_exit_1_without_password; test_seed_guard.py::test_database_error_is_not_caught; db/test_seed.py::test_cli_without_schema_fails_with_hint, ::test_cli_wrong_password_is_not_shown | PASS |
+| TC-73-016 | Ручной: сид на недоступный порт, Windows single — вывод без деталей подключения | #73 | AC-1, NFR-1, NFR-2 | High | No | — (ручной) | PASS (Windows, 2026-11-04) |
+
+Итого по #73: 16 TC (PASS 16, из них ручной 1 — TC-73-016). Принятые остаточные риски (не дефекты): значения, слитые с буквами (`waiterdb`; `adminmin` при пароле `min` → `ad******`); порт по умолчанию; CNAME из DNS-ошибки; IPv4 с ведущими нулями — раздел «Принятые остаточные риски» TC-документа.
+
+### AC и граничные случаи → TC → автотест (#73)
+
+| AC / E | Story | TC | Автотест |
+|--------|-------|----|----------|
+| AC-1 | #73 | TC-73-001, TC-73-016 | test_db_session.py::test_describe_error_masks_all_url_parts |
+| E-1 | #73 | TC-73-004 | test_db_session.py::test_describe_error_does_not_mask_default_port, ::test_describe_error_masks_explicit_default_port |
+| E-2, E-3 | #73 | TC-73-009 | test_db_session.py::test_describe_error_overlapping_values_masked_without_tails |
+| E-4 | #73 | TC-73-008, TC-73-009 | test_db_session.py::test_describe_error_token_boundaries, ::test_describe_error_keeps_exception_type_names |
+| E-5 | #73 | TC-73-003 | test_db_session.py::test_describe_error_tokens_are_case_insensitive_password_is_not |
+| E-6 | #73 | TC-73-003 | test_db_session.py::test_describe_error_masks_ipv6_host_in_brackets |
+| E-7 | #73 | TC-73-005 | test_db_session.py::test_describe_error_masks_query_hosts_ports_and_password, ::test_describe_error_masks_query_user_database_and_passfile, ::test_url_secrets_cover_asyncpg_connect_args |
+| E-8 | #73 | TC-73-011 | test_db_session.py::test_describe_error_url_without_password |
+| E-9 | #73 | TC-73-006 | test_db_session.py::test_describe_error_masks_url_encoded_password, ::test_describe_error_masks_url_encoded_user_and_database |
+| E-10 | #73 | TC-73-002 | test_db_session.py::test_describe_error_masks_whole_url_leaving_scheme |
+| E-11 | #73 | TC-73-012 | test_db_session.py::test_describe_error_with_unparsable_url_hides_text |
+| E-12 | #73 | TC-73-008 | test_db_session.py::test_describe_error_without_password_and_empty_message, ::test_describe_error_follows_implicit_context_once |
+| E-13 | #73 | TC-73-007 | test_db_session.py::test_describe_error_masks_resolved_ip_literals, ::test_mask_ip_literals |
+| Security review #73 (LOW) | #73 | TC-73-010 | test_db_session.py::test_describe_error_password_inside_other_values_leaves_no_tails |
+
+Всего в матрице: 201 TC.
+
+## Cross-reference между историями (#73)
+- #60 → #73: известное ограничение NFR-1 spec #60 закрыто; TC-60-006 (ожидаемый результат расширен: нет хоста, порта, пользователя и базы) и TC-60-010 шаг 7 — регрессия в TC-73-015, повторный ручной прогон — TC-73-016
+- #71 → #73: WARNING `DEMO_CHECK_FAILED` и `_check` через `describe_error` (TC-71-003, TC-71-006, TC-71-007) — ограничение из Notes TC-71-003 закрыто; проверка — TC-73-013
+- #56 → #73: запись ошибки `database` в `/health/ready` (TC-56-001…TC-56-003) теперь без деталей подключения — TC-73-013, шаги 1–2
+- #66 (menu_sync) → #73: отчёт `python -m app.menu_sync` об ошибке БД через `describe_error`, обрезка `MAX_SHOWN_ERROR_CHARS` после маскирования — TC-73-013, шаг 5; неразбираемый URL — TC-73-012
+- #53 → #73: TC-53-005 (ошибки запуска сида без пароля) расширено до всех деталей подключения — TC-73-013, шаг 4

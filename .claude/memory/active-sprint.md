@@ -6,7 +6,11 @@
 
 ## Ready for Dev
 
-*(пусто)*
+- Feature #9 (вход гостя по QR-токену, визит, язык; backend, security, priority:high) — G2 PASS 2026-11-10 (G1 PASS 2026-11-04), kanban:ready-for-dev. Spec: docs/specs/feature-9-guest-qr-entry.md (FR-1…FR-12, NFR-1…NFR-9, AC-1…AC-12, E-1…E-20); arch: docs/arch/feature-9-guest-qr-entry.md (ADR-9.1…9.7, схема БД без изменений). Code stubs: backend/app/guest/*, app/schemas/guest.py, app/api/{errors,guest_auth,guest}.py, config.py (+GUEST_*), .env.example, frontend/src/api/{types,client}.ts. Ветка feature/9-guest-qr-entry, draft PR в main.
+  - Stories (все kanban:ready-for-dev): #75 (вход, M), #76 (присоединение), #77 (единый 404 `qr_invalid`, 403 `table_inactive`, rate-limit входа по IP), #78 (демо в prod), #79 (перевыпуск токена), #80 (сессия-cookie, `current_guest`, M), #81 (закрытый визит → 401 `visit_closed`), #82 (Accept-Language), #83 (смена языка), #84 (экран стола, M), #85 (экран ошибки), #86 (переключатель AZ/RU).
+  - Порядок: #75 → (#76, #77, #80, #82, #84) → (#78, #79, #81, #83, #85) → #86. Для #10–#12 нужны #75 и #80.
+  - Developer: подключить роутер в main.py, `app.state.guest_session_codec`, валидатор `GUEST_SESSION_SECRET` в prod/scaled (обновить тесты prod/scaled Settings), `<meta name="referrer">` в index.html.
+  - Решения пользователя 2026-11-10: Q-2 — экран ошибки по умолчанию на `az`; Q-3 — перевыпуск и отключение стола сразу обрывают сессии (проверка `tia`, `is_active`). Отложено: Q-1 (визит открывает официант — #19/#21), Q-4 (повторное включение стола без перевыпуска — #27).
 
 ## In Development (WIP: 0/5)
 

@@ -87,6 +87,14 @@ class Settings(BaseSettings):
     # --- наблюдаемость (#32)
     sentry_dsn: SecretStr | None = None
 
+    # --- гость: вход по QR и подписанная cookie сессии (#9, ADR-9.2, ADR-9.7).
+    # Обязательность GUEST_SESSION_SECRET при prod/scaled (≥ 32 символов) проверяет
+    # _check_mode_consistency — добавляет developer вместе с правкой тестов (arch «Конфигурация»).
+    guest_session_secret: SecretStr | None = None
+    guest_session_ttl_hours: int = Field(default=12, ge=1, le=72)
+    guest_cookie_secure: bool | None = None  # None → true при APP_ENV=prod
+    guest_entry_rate_limit: int = Field(default=30, ge=0)  # входов в минуту с одного IP; 0 — выкл.
+
     @field_validator("database_url")
     @classmethod
     def _check_database_url(cls, value: SecretStr) -> SecretStr:
@@ -129,6 +137,13 @@ class Settings(BaseSettings):
         if self.docs_enabled is not None:
             return self.docs_enabled
         return self.app_env is not AppEnv.PROD
+
+    @property
+    def guest_cookie_secure_effective(self) -> bool:
+        """Атрибут ``Secure`` cookie гостя (ADR-9.2): ``GUEST_COOKIE_SECURE`` или ``true`` при prod."""
+        if self.guest_cookie_secure is not None:
+            return self.guest_cookie_secure
+        return self.app_env is AppEnv.PROD
 
     @property
     def frontend_dist_path(self) -> Path:

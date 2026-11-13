@@ -34,6 +34,7 @@ from app.models.visit import COMMENT_MAX, QTY_MAX, QTY_MIN
 from app.seed import data
 from app.seed.guard import FOREIGN_TENANTS_REFUSAL, ForeignTenantsError
 from app.seed.loader import SeededTable, SeedSummary
+from tests.conftest import TEST_GUEST_SESSION_SECRET
 
 SEED_DATA_FILE = Path(data.__file__)
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -475,6 +476,7 @@ def test_foreign_tenants_refusal_is_same_in_both_modes(
     """E-10 (NFR-2): отказ AC-1 не зависит от ``APP_MODE``; Redis сиду не нужен (адрес фиктивный)."""
     monkeypatch.setenv("APP_MODE", mode)
     monkeypatch.setenv("REDIS_URL", f"redis://:{PASSWORD}@redis.invalid:6379/0")
+    monkeypatch.setenv("GUEST_SESSION_SECRET", TEST_GUEST_SESSION_SECRET)  # обязателен в scaled (#9)
     called: list[object] = []
     monkeypatch.setattr(seed_cli, "ensure_seed_target", _foreign_target)
     monkeypatch.setattr(seed_cli, "apply_seed", lambda session: called.append(session))

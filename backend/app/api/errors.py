@@ -42,4 +42,4 @@ def api_error(status_code: int, code: ErrorCode, headers: Mapping[str, str] | No
 
     Вызывающий делает ``raise api_error(...)``. ``Cache-Control: no-store`` к ошибкам гостевого API
     добавляет роутер (ADR-9.6: ответы ``qr_invalid`` одинаковы по коду, телу и заголовкам)."""
-    raise NotImplementedError
+    return HTTPException(status_code, detail={"code": code.value}, headers=dict(headers) if headers else None)

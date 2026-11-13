@@ -16,7 +16,7 @@ from app.core.config import ConfigError, Settings
 from app.core.container import build_container, start_container, stop_container
 from app.core.scheduler import TaskRegistry
 from app.db.session import Database
-from tests.conftest import FAKE_DATABASE_URL, make_settings
+from tests.conftest import FAKE_DATABASE_URL, TEST_GUEST_SESSION_SECRET, make_settings
 from tests.doubles import FakeDatabase, FakeEventBus, FakeRateLimiter, FakeTaskScheduler, make_fake_container
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -90,7 +90,14 @@ def test_scaled_without_redis_url_is_startup_error(registry: TaskRegistry) -> No
     ("mode_env", "forbidden"),
     [
         ({"APP_MODE": "single"}, ("redis", "arq", "app.core.scaled")),
-        ({"APP_MODE": "scaled", "REDIS_URL": "redis://redis:6379/0"}, ("apscheduler", "app.core.single")),
+        (
+            {
+                "APP_MODE": "scaled",
+                "REDIS_URL": "redis://redis:6379/0",
+                "GUEST_SESSION_SECRET": TEST_GUEST_SESSION_SECRET,
+            },
+            ("apscheduler", "app.core.single"),
+        ),
     ],
 )
 def test_lazy_import_in_clean_process(mode_env: dict[str, str], forbidden: tuple[str, ...], tmp_path: Path) -> None:

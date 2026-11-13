@@ -22,6 +22,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 # Адреса, на которых допустимо слушать в режиме single (ТЗ 9.1: снаружи — только через туннель).
 LOOPBACK_HOSTS: frozenset[str] = frozenset({"127.0.0.1", "::1", "localhost"})
 
+# Минимальная длина GUEST_SESSION_SECRET (символы ASCII = байты ключа HMAC; app.guest.session.MIN_SECRET_LENGTH).
+GUEST_SESSION_SECRET_MIN_LENGTH = 32
+
 
 class AppMode(StrEnum):
     """Режим запуска (ТЗ, раздел 8)."""
@@ -88,8 +91,7 @@ class Settings(BaseSettings):
     sentry_dsn: SecretStr | None = None
 
     # --- гость: вход по QR и подписанная cookie сессии (#9, ADR-9.2, ADR-9.7).
-    # Обязательность GUEST_SESSION_SECRET при prod/scaled (≥ 32 символов) проверяет
-    # _check_mode_consistency — добавляет developer вместе с правкой тестов (arch «Конфигурация»).
+    # GUEST_SESSION_SECRET обязателен при prod/scaled (≥ 32 символов) — _check_mode_consistency.
     guest_session_secret: SecretStr | None = None
     guest_session_ttl_hours: int = Field(default=12, ge=1, le=72)
     guest_cookie_secure: bool | None = None  # None → true при APP_ENV=prod
@@ -130,7 +132,22 @@ class Settings(BaseSettings):
             )
         if self.app_env is AppEnv.PROD and self.public_base_url is None:
             raise ValueError("PUBLIC_BASE_URL обязателен при APP_ENV=prod")
+        self._check_guest_session_secret()
         return self
+
+    def _check_guest_session_secret(self) -> None:
+        """ADR-9.2: в prod и в scaled (несколько процессов api с общим ключом) секрет обязателен;
+        короче ``GUEST_SESSION_SECRET_MIN_LENGTH`` — ошибка в любом режиме. Значение в текст не попадает."""
+        secret = self.guest_session_secret
+        if secret is None:
+            if self.app_env is AppEnv.PROD or self.app_mode is AppMode.SCALED:
+                raise ValueError(
+                    "GUEST_SESSION_SECRET обязателен при APP_ENV=prod и при APP_MODE=scaled "
+                    f"(не короче {GUEST_SESSION_SECRET_MIN_LENGTH} символов)"
+                )
+            return
+        if len(secret.get_secret_value()) < GUEST_SESSION_SECRET_MIN_LENGTH:
+            raise ValueError(f"GUEST_SESSION_SECRET должен быть не короче {GUEST_SESSION_SECRET_MIN_LENGTH} символов")
 
     @property
     def is_docs_enabled(self) -> bool:

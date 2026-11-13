@@ -264,6 +264,14 @@ Vite открывается на http://localhost:5173 (если порт зан
    | `PUBLIC_DOMAIN` | домен для Caddy и `PUBLIC_BASE_URL`, например `menu.example.com` |
    | `EDGE_SUBNET` | частная подсеть сети `caddy`–`api`, не пересекающаяся с другими сетями хоста; `api` доверяет `X-Forwarded-For` только из неё |
 
+   Там же, в разделе «Гость», раскомментировать и задать `GUEST_SESSION_SECRET` — ключ подписи гостевых сессий, общий для всех процессов `api` (не короче 32 символов). Без него `api` и `worker` не запустятся с ошибкой конфигурации: при `APP_ENV=prod` и `APP_MODE=scaled` он обязателен. Сгенерировать:
+
+   ```bash
+   python -c "import secrets; print(secrets.token_urlsafe(48))"
+   ```
+
+   Смена ключа завершает все гостевые сессии: гости входят заново по QR-коду.
+
    Необязательно: `API_WORKERS` — число процессов `api` (по умолчанию 2). `APP_MODE=scaled`, `APP_ENV=prod`, `DATABASE_URL`, `REDIS_URL` (`redis://redis:6379/0`), `PUBLIC_BASE_URL` и `MEDIA_DIR` compose задаёт сам, значения из `deploy/.env` для них игнорируются. Без любой обязательной переменной compose не запустится и назовёт её.
 
 3. Собрать и запустить:

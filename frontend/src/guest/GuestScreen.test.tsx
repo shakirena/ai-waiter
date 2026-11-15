@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, enterTable, setGuestLang } from "../api/client";
 import type { ApiErrorCode, GuestEntryResponse, GuestLang, GuestSessionResponse } from "../api/types";
 import GuestPage from "../pages/GuestPage";
+import { GuestScreen } from "./GuestScreen";
 import { LANG_STORAGE_KEY } from "./langStorage";
 
 // Экран гостя #84–#86: API подменён, ApiError — настоящий (по нему экран выбирает текст).
@@ -173,6 +174,24 @@ describe("#85 экран ошибки", () => {
     renderGuest();
 
     expect(await screen.findByTestId("guest-error-message")).toHaveTextContent("QR-код недействителен");
+  });
+
+  // Открытый вопрос, не дефект: язык экрана ошибки входа — всегда язык браузера (az, если не az/ru),
+  // выбор в localStorage aiw_guest_lang не учитывается. Тест закрепляет текущее поведение.
+  it.each([
+    ["en-US", "ru", "qr_invalid" as const, 404, "QR-kod etibarsızdır, ofisianta müraciət edin"],
+    ["tr-TR", "ru", "try_again" as const, 503, "Xidmət müvəqqəti olaraq əlçatan deyil"],
+    ["ru-RU", "az", "table_inactive" as const, 403, "Стол временно не обслуживается"],
+  ])("браузер %s, на устройстве %s: ошибка %s на языке браузера", async (tag, stored, code, status, text) => {
+    setBrowserLanguage(tag);
+    window.localStorage.setItem(LANG_STORAGE_KEY, stored);
+    enterTableMock.mockRejectedValueOnce(apiError(status, code));
+
+    renderGuest();
+
+    expect(await screen.findByTestId("guest-error-message")).toHaveTextContent(text);
+    expect(enterTableMock).toHaveBeenCalledWith(TOKEN, stored, expect.any(AbortSignal));
+    expect(window.localStorage.getItem(LANG_STORAGE_KEY)).toBe(stored);
   });
 
   it("422 валидации токена → как недействительный QR", async () => {
@@ -402,6 +421,32 @@ describe("#86 переключатель языка", () => {
     fireEvent.click(restart);
 
     expect(await screen.findByTestId("guest-table-screen")).toBeInTheDocument();
+    expect(enterTableMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("GuestScreen: смена токена без перемонтирования", () => {
+  // GuestPage перемонтирует экран по key={token}; здесь проверяется контракт самого компонента:
+  // поздний отказ смены языка не подменяет экран ошибки нового входа «прежним столом».
+  it("ошибка смены языка после неудачного входа по новому токену оставляет экран ошибки", async () => {
+    const langCall = deferred<GuestSessionResponse>();
+    enterTableMock.mockResolvedValueOnce(entry({ lang: "ru" })).mockRejectedValueOnce(apiError(404, "qr_invalid"));
+    setGuestLangMock.mockReturnValueOnce(langCall.promise);
+
+    const { rerender } = render(<GuestScreen token={TOKEN} />);
+    fireEvent.click(await screen.findByTestId("guest-lang-az"));
+    expect(screen.getByTestId("guest-lang-az")).toBeDisabled();
+
+    rerender(<GuestScreen token="Other_token_0123456789ab" />);
+    expect(await screen.findByTestId("guest-error-message")).toHaveTextContent("QR-код недействителен");
+
+    await act(async () => {
+      langCall.reject(new TypeError("Failed to fetch"));
+      await langCall.promise.catch(() => undefined);
+    });
+
+    expect(screen.getByTestId("guest-error-message")).toHaveTextContent("QR-код недействителен");
+    expect(screen.queryByTestId("guest-lang-error")).not.toBeInTheDocument();
     expect(enterTableMock).toHaveBeenCalledTimes(2);
   });
 });

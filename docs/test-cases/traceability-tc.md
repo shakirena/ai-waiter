@@ -1,6 +1,6 @@
 # Test Case Traceability Matrix
 
-Обновлено: 2026-11-04. Feature #6 «Каркас проекта» (stories #37–#45, прогон 2026-10-02), feature #7 «Модель данных v1 и миграции Alembic» (stories #48–#54, #56, прогон 2026-10-12, финальный прогон G5 2026-10-13), feature #8 «Импорт меню из CSV/XLSX» (stories #61–#67, прогон 2026-10-19), защита от демо-данных (story #60, прогон 2026-10-28; story #71, прогон 2026-10-29) и маскирование `DATABASE_URL` в `describe_error` (story #73, прогон 2026-11-04). Столбец «Авто» — где тест выполняется автоматически (для #7 и #8 пути относительно `backend/tests/`, `db/` — тесты с маркером `db`, нужен PostgreSQL); «Прогон» — результат на дату прогона.
+Обновлено: 2026-11-15. Feature #6 «Каркас проекта» (stories #37–#45, прогон 2026-10-02), feature #7 «Модель данных v1 и миграции Alembic» (stories #48–#54, #56, прогон 2026-10-12, финальный прогон G5 2026-10-13), feature #8 «Импорт меню из CSV/XLSX» (stories #61–#67, прогон 2026-10-19), защита от демо-данных (story #60, прогон 2026-10-28; story #71, прогон 2026-10-29) маскирование `DATABASE_URL` в `describe_error` (story #73, прогон 2026-11-04) и feature #9 «Вход гостя по QR-токену, визит, язык» (stories #75–#86, прогон 2026-11-15). Столбец «Авто» — где тест выполняется автоматически (для #7 и #8 пути относительно `backend/tests/`, `db/` — тесты с маркером `db`, нужен PostgreSQL); «Прогон» — результат на дату прогона.
 
 ## Feature #6 — Каркас проекта
 
@@ -345,3 +345,78 @@
 - #56 → #73: запись ошибки `database` в `/health/ready` (TC-56-001…TC-56-003) теперь без деталей подключения — TC-73-013, шаги 1–2
 - #66 (menu_sync) → #73: отчёт `python -m app.menu_sync` об ошибке БД через `describe_error`, обрезка `MAX_SHOWN_ERROR_CHARS` после маскирования — TC-73-013, шаг 5; неразбираемый URL — TC-73-012
 - #53 → #73: TC-53-005 (ошибки запуска сида без пароля) расширено до всех деталей подключения — TC-73-013, шаг 4
+
+## Feature #9 — Вход гостя по QR-токену, визит, язык
+
+Прогон 2026-11-15 (qa-lead, Windows, PostgreSQL 16): backend — 2014 passed, 3 skipped (scaled без `REDIS_URL`), покрытие `app` 100% строк и ветвей; frontend — 141 passed, строки 100%, ветви 99,19%. Нестабильный тест `App.test.tsx` «/t/demo лениво загружает экран гостя…» исправлен (`waitFor`). Backend-пути — относительно `backend/tests/`, frontend — `frontend/src/` (кроме `pwa-config.test.ts`). Полные списки тестов и шаги — в `docs/test-cases/feature-9-guest-qr-entry.md`.
+
+| TC ID | Title | Feature | AC | Priority | E2E Automated | Авто (unit/static) | Прогон |
+|-------|-------|---------|-----|----------|---------------|--------------------|--------|
+| TC-75-001 | Первый вход открывает визит, 200 и cookie aiw_guest (HttpOnly) | #75 | AC-1, FR-1, FR-6 | Critical | No | test_guest_api.py::test_entry_success_body_and_cookie; db/test_guest_entry.py::test_first_entry_opens_visit, ::test_http_full_flow_entry_session_lang | PASS |
+| TC-75-002 | Ответ входа без внутренних идентификаторов, tenant_id от клиента не принимается | #75 | AC-1, NFR-2, NFR-3 | Critical | No | test_guest_api.py::test_entry_success_body_and_cookie, ::test_session_ignores_client_supplied_ids, ::test_openapi_has_guest_paths_without_internal_details | PASS |
+| TC-75-003 | Превью и prefetch /t/{token} не открывают визит | #75 | E-16, ADR-9.1 | High | No | db/test_guest_entry.py::test_http_spa_page_does_not_open_visit (G5); test_guest_api.py::test_entry_get_is_not_allowed; test_spa.py::test_spa_routes_fall_back_to_index | PASS |
+| TC-75-004 | БД недоступна — 503 try_again с no-store (в т.ч. OSError) | #75 | E-15 | High | No | test_guest_api.py::test_database_unavailable_is_try_again_without_details, ::test_database_error_text_is_masked_in_log, ::test_other_errors_are_500, ::test_entry_visit_conflict_is_try_again | PASS |
+| TC-75-005 | Только JSON-тело (CSRF), стандартная 422 | #75 | NFR-5, E-4 | High | No | test_guest_api.py::test_entry_rejects_non_json_body, ::test_entry_body_validation_is_standard_422, ::test_change_lang_requires_json_body; frontend pwa-config.test.ts | PASS |
+| TC-75-006 | Логи входа и отказов без токена, cookie, Accept-Language | #75 | NFR-3 | High | No | test_guest_api.py::test_session_invalid_and_closed, ::test_entry_rate_limiter_failure_is_fail_open; статически app/guest/entry.py | PASS (авто-часть + статическая) |
+| TC-75-007 | Ручной: замер p95 входа ≤ 200 мс | #75 | NFR-6 | Medium | No | — (ручной) | НЕ ВЫПОЛНЕН |
+| TC-76-001 | Второе устройство присоединяется к открытому визиту | #76 | AC-2, FR-2, FR-12 | Critical | No | db/test_guest_entry.py::test_second_entry_joins_open_visit; test_guest_api.py::test_entry_rejoin_returns_is_new_false | PASS |
+| TC-76-002 | Одновременные входы — ровно один визит, не 500 | #76 | E-1, ADR-9.3 | Critical | No | db/test_guest_entry.py::test_concurrent_entries_open_exactly_one_visit, ::test_insert_conflict_joins_visit_of_parallel_transaction; test_guest_services.py::test_get_or_open_visit_gives_up_after_attempts | PASS |
+| TC-76-003 | Перезагрузка с cookie — тот же визит и язык | #76, #82 | E-2, FR-7 | High | No | db/test_guest_entry.py::test_reentry_keeps_language_of_same_table_cookie, ::test_http_full_flow_entry_session_lang; test_guest_api.py::test_entry_passes_claims_of_existing_cookie | PASS |
+| TC-76-004 | last_activity_at: вход, смена языка, touch_visit | #76, #83 | FR-12 | Medium | No | db/test_guest_entry.py::test_second_entry_joins_open_visit, ::test_change_lang_updates_visit, ::test_touch_visit_updates_only_open_visit_of_tenant | PASS |
+| TC-77-001 | Единый 404 qr_invalid: неизвестный, формат, перевыпущенный | #77 | AC-3, FR-3, ADR-9.6 | Critical | No | test_guest_api.py::test_entry_invalid_token_responses_are_identical; db/test_guest_entry.py::test_unknown_token_does_not_create_visit, ::test_http_reissue_and_disable_break_sessions | PASS |
+| TC-77-002 | Формат токена без запроса в БД; 422 для пустого/>128 | #77 | E-4, FR-3 | High | No | test_guest_tokens.py::test_invalid_formats, ::test_valid_formats; test_guest_api.py::test_entry_format_check_does_not_touch_database; test_guest_services.py::test_enter_table_rejects_format_without_query | PASS |
+| TC-77-003 | Отключённый стол — 403 table_inactive без данных | #77 | E-5, ADR-9.6 | Critical | No | test_guest_api.py::test_entry_table_inactive; db/test_guest_entry.py::test_inactive_table_is_refused, ::test_http_reissue_and_disable_break_sessions | PASS |
+| TC-77-004 | Rate-limit входа по IP — 429 + Retry-After, 422 считаются | #77 | E-18, NFR-4, ADR-9.7 | High | No | test_guest_api.py::test_entry_rate_limited, ::test_entry_rate_limit_counts_invalid_bodies, ::test_entry_rate_limit_with_real_single_limiter, ::test_client_ip_key | PASS |
+| TC-77-005 | Сбой RateLimiter — fail-open | #77 | E-19 | High | No | test_guest_api.py::test_entry_rate_limiter_failure_is_fail_open, ::test_exception_chain_names_uses_context_and_stops_on_cycles | PASS |
+| TC-78-001 | Демо-токен при prod — как неизвестный | #78 | AC-4, FR-4 | Critical | No | db/test_guest_entry.py::test_http_demo_in_prod, ::test_demo_tokens_rejected_only_with_reject_demo; test_guest_api.py::test_entry_secure_cookie_and_reject_demo_flags | PASS |
+| TC-78-002 | dev/test — демо-токены работают | #78 | E-9 | High | No | db/test_guest_entry.py::test_demo_tokens_rejected_only_with_reject_demo, ::test_http_demo_in_prod | PASS |
+| TC-78-003 | Сессия демо-заведения при prod — 401 guest_session_invalid | #78, #80 | E-10, FR-4 | Critical | No | db/test_guest_entry.py::test_http_demo_in_prod, ::test_demo_session_is_invalid_with_reject_demo; test_guest_services.py::test_load_guest_context_rejects_demo_before_query | PASS |
+| TC-79-001 | Перевыпуск: T2 32 символа, T1 → 404, T2 работает | #79 | AC-5, FR-5 | Critical | No | db/test_guest_entry.py::test_reissue_token, ::test_http_reissue_and_disable_break_sessions; test_guest_tokens.py::test_generated_token_is_32_base64url_chars_with_192_bits | PASS |
+| TC-79-002 | Перевыпуск при гостях — сессии 401, новый QR в тот же визит | #79, #80 | E-6, R-Q3 | Critical | No | db/test_guest_entry.py::test_reissue_token, ::test_http_reissue_and_disable_break_sessions | PASS |
+| TC-79-003 | Двойной перевыпуск в одной транзакции меняет tia (clock_timestamp) | #79 | FR-5, R-Q3 | High | No | db/test_guest_entry.py::test_reissue_twice_in_one_transaction_changes_issued_at | PASS |
+| TC-79-004 | Коллизия токена — повтор в SAVEPOINT | #79 | E-17 | Medium | No | db/test_guest_entry.py::test_reissue_retries_on_collision, ::test_reissue_gives_up_after_attempts; test_guest_services.py::test_reissue_collision_retries_up_to_limit | PASS |
+| TC-79-005 | Токены через secrets; tenant-фильтр перевыпуска | #79 | NFR-1, NFR-2 | High | No | test_guest_tokens.py::test_generator_uses_secrets, ::test_generated_tokens_are_unique; db/test_guest_entry.py::test_reissue_filters_by_tenant | PASS |
+| TC-80-001 | GET /session из cookie, без id из запроса | #80 | AC-6, NFR-2 | Critical | No | test_guest_api.py::test_session_returns_view_without_set_cookie, ::test_session_ignores_client_supplied_ids; db/test_guest_entry.py::test_load_guest_context_returns_view | PASS |
+| TC-80-002 | Подделка, версия, срок — 401 guest_session_required | #80 | AC-6, E-14 | Critical | No | test_guest_api.py::test_session_required, ::test_session_with_foreign_secret_or_expired; test_guest_session.py::test_decode_* | PASS |
+| TC-80-003 | Чужие vid/tid/tbl при верной подписи — 401 guest_session_invalid | #80 | E-14a, NFR-2 | Critical | No | db/test_guest_entry.py::test_session_of_other_tenant_or_table_is_invalid; test_guest_api.py::test_session_invalid_and_closed | PASS |
+| TC-80-004 | Атрибуты cookie и состав payload | #80 | FR-6, NFR-8 | High | No | test_guest_api.py::test_entry_secure_cookie_and_reject_demo_flags, ::test_entry_ttl_from_settings; test_guest_session.py::test_payload_is_compact_json_without_extra_fields | PASS |
+| TC-80-005 | GUEST_SESSION_SECRET и настройки сессии | #80 | NFR-7 | High | No | test_config.py::test_guest_session_secret_*, ::test_guest_cookie_secure_effective, ::test_guest_defaults; test_guest_session.py::test_build_codec_* | PASS |
+| TC-80-006 | Отключение стола обрывает сессии, визит не закрывается | #80 | E-5, R-Q3 | Critical | No | db/test_guest_entry.py::test_http_reissue_and_disable_break_sessions, ::test_inactive_table_and_reactivation_e20 | PASS |
+| TC-80-007 | Повторное включение стола — прежние cookie действуют (фиксация, Q-4) | #80 | E-20, Q-4 | Medium | No | db/test_guest_entry.py::test_inactive_table_and_reactivation_e20 | PASS (текущее поведение, не дефект) |
+| TC-80-008 | QR другого стола/заведения заменяет сессию | #75, #80 | E-3, D-2 | High | No | db/test_guest_entry.py::test_http_scanning_other_tenant_replaces_session, ::test_cookie_of_other_table_does_not_set_language; frontend GuestScreen.test.tsx «смена токена без перемонтирования» (G5) | PASS |
+| TC-81-001 | Сессия закрытого визита — 401 visit_closed | #81 | AC-7, FR-8 | Critical | No | db/test_guest_entry.py::test_http_closed_visit, ::test_closed_visit_session_and_new_visit | PASS |
+| TC-81-002 | После закрытия — новый визит, старый в истории | #81 | E-7 | High | No | db/test_guest_entry.py::test_closed_visit_session_and_new_visit, ::test_http_closed_visit | PASS |
+| TC-81-003 | Повторное закрытие, tenant-фильтр, staff_id только для staff | #81 | E-8, FR-8 | High | No | db/test_guest_entry.py::test_close_visit_is_idempotent_and_keeps_first_closer, ::test_close_visit_filters_by_tenant, ::test_close_visit_staff_id_only_for_staff | PASS |
+| TC-82-001 | Язык по Accept-Language: ru-RU → ru | #82 | AC-8, FR-7 | Critical | No | test_guest_lang.py::test_resolve_entry_lang, ::test_parse_accept_language; db/test_guest_entry.py::test_first_entry_opens_visit | PASS |
+| TC-82-002 | Нет/мусорный/длинный заголовок — язык по умолчанию | #82 | E-11 | High | No | test_guest_lang.py::test_parse_accept_language, ::test_parse_truncates_long_header; db/test_guest_entry.py::test_default_language_of_tenant | PASS |
+| TC-82-003 | Порядок выбора языка: тело → cookie стола → браузер → default | #82 | FR-7, FR-10 | High | No | test_guest_lang.py::test_resolve_entry_lang; db/test_guest_entry.py::test_cookie_of_other_table_does_not_set_language | PASS |
+| TC-83-001 | PUT /session/lang — 200, переподпись, GET → az | #83 | AC-9, FR-9 | Critical | No | test_guest_api.py::test_change_lang_resigns_cookie_without_extending; db/test_guest_entry.py::test_http_full_flow_entry_session_lang, ::test_change_lang_updates_visit | PASS |
+| TC-83-002 | Язык вне Lang / заведения — 422 | #83 | E-12 | High | No | test_guest_api.py::test_change_lang_not_supported, ::test_change_lang_invalid_value; db/test_guest_entry.py::test_change_lang_not_supported_by_tenant | PASS |
+| TC-83-003 | Смена языка без сессии / по закрытому визиту — 401 | #83 | FR-9, NFR-5 | High | No | test_guest_api.py::test_change_lang_requires_session, ::test_change_lang_requires_json_body; db/test_guest_entry.py::test_http_closed_visit | PASS |
+| TC-84-001 | Экран стола: заведение, стол, переключатель | #84 | AC-10 | Critical | No | frontend GuestScreen.test.tsx «#84 экран стола»; App.test.tsx «/t/demo лениво загружает…» (нестабилен 2026-11-15, исправлен tester'ом) | PASS |
+| TC-84-002 | Экран без токена и HTML-разметки; referrer same-origin | #84 | FR-11, NFR-3 | High | No | frontend GuestScreen.test.tsx «токен не выводится…», «названия с разметкой…»; client.test.ts; статически index.html | PASS |
+| TC-84-003 | Каждый заход — POST /entry с сохранённым языком; отмена | #84 | FR-11 | Medium | No | frontend GuestScreen.test.tsx «передаёт при входе язык…», «размонтирование до ответа…»; client.test.ts | PASS |
+| TC-84-004 | Ручной: вёрстка экрана стола, ошибки и переключателя на 360 px | #84, #85, #86 | AC-10…AC-12, ТЗ NFR-2 | Medium | No | — (ручной) | НЕ ВЫПОЛНЕН |
+| TC-85-001 | Ошибка qr_invalid на языке браузера, без кода и токена | #85 | AC-11, R-Q2 | Critical | No | frontend GuestScreen.test.tsx «404 qr_invalid, браузер %s»; i18n.test.ts; errors.test.ts | PASS |
+| TC-85-002 | 422 входа показывается как qr_invalid | #85 | E-4 | High | No | frontend GuestScreen.test.tsx «422 валидации токена…»; errors.test.ts | PASS |
+| TC-85-003 | table_inactive и rate_limited без кнопки и автоповтора | #85 | E-5, E-18 | High | No | frontend GuestScreen.test.tsx «403 table_inactive», «429 rate_limited…» | PASS |
+| TC-85-004 | Сеть/5xx — «Сервис временно недоступен» и «Повторить» | #85 | E-15 | High | No | frontend GuestScreen.test.tsx «%s → «Сервис временно недоступен»…», «кнопка «Повторить» на языке браузера (az)» | PASS |
+| TC-85-005 | visit_closed — «Начать заново»; guest_session_* — тихий вход | #85 | E-7, FR-6 | High | No | frontend GuestScreen.test.tsx «401 visit_closed…», «401 %s — тихий повторный вход…»; errors.test.ts | PASS |
+| TC-85-006 | Язык ошибки входа — браузера при сохранённом выборе (Открытый вопрос) | #85 | AC-11, R-Q2 | Medium | No | frontend GuestScreen.test.tsx «язык ошибки — браузера…», «браузер %s, на устройстве %s…» (G5) | PASS (текущее поведение, открытый вопрос) |
+| TC-86-001 | Переключатель меняет тексты сразу и сохраняет выбор | #86 | AC-12 | Critical | No | frontend GuestScreen.test.tsx «меняет тексты сразу…» | PASS |
+| TC-86-002 | Выбор языка после перезагрузки | #86 | AC-12, E-2 | High | No | frontend GuestScreen.test.tsx «выбор остаётся после перезагрузки…»; langStorage.test.ts | PASS |
+| TC-86-003 | Один язык — нет переключателя; порядок языков | #86 | E-13 | High | No | frontend GuestScreen.test.tsx «заведение с одним языком…», «показывает только языки заведения…» | PASS |
+| TC-86-004 | Ошибка смены языка — язык прежний, понятное сообщение | #86 | AC-12, E-12 | High | No | frontend GuestScreen.test.tsx «ошибка %s — язык прежний…», «после ошибки повторное нажатие…» | PASS |
+| TC-86-005 | localStorage недоступен / постороннее значение | #86 | FR-11 | Medium | No | frontend langStorage.test.ts; i18n.test.ts «isGuestLang» | PASS |
+| TC-86-006 | Ручной: AZ-тексты экрана гостя — носитель языка | #86 | AI-6 | High | No | — (ручной) | НЕ ВЫПОЛНЕН |
+
+Итого по #9: 57 TC (авто 54 — PASS; ручные 3 — TC-75-007, TC-84-004, TC-86-006 — НЕ ВЫПОЛНЕН, G5 не блокируют). Фиксация текущего поведения (не дефекты): TC-80-007 (E-20, Q-4 → #27), TC-85-006 (язык экрана ошибки — открытый вопрос).
+
+Всего в матрице: 258 TC.
+
+## Cross-reference между историями (#9)
+- #41 → #9: заглушка `/t/:token` (TC-41-002) заменена экраном гостя — TC-84-001; Service Worker не перехватывает `/api` (TC-41-004) — TC-75-005
+- #42 → #9: SPA fallback `/t/{token}` (TC-42-001) — превью не открывает визит, TC-75-003
+- #39/#40 → #9: `RateLimiter` single/scaled (TC-39-004, TC-40-001) — лимит входа TC-77-004, fail-open TC-77-005
+- #60/#71 → #9: демо-данные в prod — дополнительно отказ во входе и в сессии по демо-токенам, TC-78-001…TC-78-003
+- #73 → #9: `describe_error` вызывается из `GuestRoute` (503 `try_again`) — TC-75-004

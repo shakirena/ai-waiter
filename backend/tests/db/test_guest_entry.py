@@ -508,6 +508,28 @@ async def test_http_reissue_and_disable_break_sessions(
     assert "Кафе" not in refused.text and "Стол" not in refused.text
 
 
+async def test_http_spa_page_does_not_open_visit(
+    http: Callable[..., AsyncClient], db_session: AsyncSession, table: Table, tmp_path: Any
+) -> None:
+    """E-16: превью мессенджера / prefetch HTML ``/t/{token}`` не создаёт визит — его открывает только API входа."""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<!doctype html><div id=root></div>", encoding="utf-8")
+    client = http(make_settings(serve_frontend=True, frontend_dist_dir=dist))
+    preview_headers = {"User-Agent": "TelegramBot (like TwitterBot)", "Purpose": "prefetch", "Sec-Purpose": "prefetch"}
+    for path in (f"/t/{table.qr_token}", f"/t/{table.qr_token}/menu"):
+        page = await client.get(path, headers=preview_headers)
+        assert page.status_code == 200
+        assert "text/html" in page.headers["content-type"]
+        assert "set-cookie" not in page.headers
+        assert (await client.head(path)).status_code == 200
+    assert await _visit_count(db_session, table.id) == 0
+
+    entered = await client.post(ENTRY, json={"token": table.qr_token})
+    assert entered.status_code == 200
+    assert await _visit_count(db_session, table.id) == 1
+
+
 async def test_http_closed_visit(
     http: Callable[..., AsyncClient], db_session: AsyncSession, tenant: Tenant, table: Table
 ) -> None:

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -30,7 +30,12 @@ describe("Маршруты приложения", () => {
     renderAt(path);
     expect(await screen.findByTestId("guest-page")).toBeInTheDocument();
     expect(screen.getByTestId("guest-loading")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith("/api/guest/v1/entry", expect.objectContaining({ method: "POST" }));
+    // Вход выполняется в passive effect после коммита lazy-компонента: findByTestId может найти
+    // страницу раньше, чем эффект вызовет fetch, поэтому вызов ждём через waitFor.
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("/api/guest/v1/entry", expect.objectContaining({ method: "POST" })),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(JSON.parse(fetchMock.mock.calls[0]![1]!.body as string)).toMatchObject({ token: "demo" });
   });
 

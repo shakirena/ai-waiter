@@ -96,7 +96,7 @@ frontend/src/pages/GuestPage.tsx ──fetch──▶ /api/guest/v1/*        (ap
 **Контекст.** Два устройства за столом сканируют QR одновременно. Открытый визит у стола должен быть один (ADR-7.5); БД гарантирует это частичным уникальным индексом `uq_visits_open_table (table_id) WHERE status = 'open'`.
 
 **Решение.** `visits.get_or_open_visit(session, *, tenant_id, table_id, lang) -> (Visit, created: bool)`:
-1. `SELECT … FROM visits WHERE tenant_id = :t AND table_id = :tb AND status = 'open'` (частый путь: визит уже есть). Найден — `UPDATE visits SET last_activity_at = now()` и вернуть `created=False`.
+1. `SELECT … FROM visits WHERE tenant_id = :t AND table_id = :tb AND status = 'open'` (частый путь: визит уже есть). Найден — `UPDATE visits SET last_activity_at = now()` и вернуть `created=False` (в реализации шаг 1 — один `UPDATE … RETURNING`, см. «Реализация», п. 2).
 2. Иначе `INSERT INTO visits (id, tenant_id, table_id, lang) VALUES (new_id(), …) ON CONFLICT (table_id) WHERE status = 'open' DO NOTHING RETURNING *` — `postgresql.insert(...).on_conflict_do_nothing(index_elements=["table_id"], index_where=text(OPEN_VISIT_PREDICATE))`. Строка вернулась — `created=True`.
 3. Пусто (визит открыл параллельный запрос) — повторить шаг 1. Если визит успели закрыть между шагами, цикл повторяется, не больше `OPEN_VISIT_ATTEMPTS = 3` раз, затем `VisitOpenConflictError` (→ 503 `try_again`; практически недостижимо).
 
@@ -130,7 +130,7 @@ frontend/src/pages/GuestPage.tsx ──fetch──▶ /api/guest/v1/*        (ap
 
 **Решение.**
 - `tokens.generate_qr_token() -> str` — `secrets.token_urlsafe(QR_TOKEN_BYTES)`, `QR_TOKEN_BYTES = 24`: 192 бита, 32 символа base64url. Соответствует `QR_TOKEN_PATTERN` (`^[A-Za-z0-9_-]{22,64}$`) и требованию ≥ 128 бит.
-- `tokens.reissue_table_token(session, *, tenant_id, table_id) -> Table` — `UPDATE tables SET qr_token = :new, token_issued_at = now() WHERE tenant_id = :t AND id = :id RETURNING *`. Стола нет — `TableNotFoundError`. Коллизия по `uq_tables_qr_token` (практически невозможна) — повтор с новым токеном внутри SAVEPOINT, до 3 раз. Commit делает вызывающий (#27 — эндпоинт админки). Старый токен перестаёт находиться сразу; сессии, выданные по старому токену, отвергаются по `tia` (ADR-9.2).
+- `tokens.reissue_table_token(session, *, tenant_id, table_id) -> Table` — `UPDATE tables SET qr_token = :new, token_issued_at = now() WHERE tenant_id = :t AND id = :id RETURNING *` (в реализации — `clock_timestamp()`, см. «Реализация», п. 1). Стола нет — `TableNotFoundError`. Коллизия по `uq_tables_qr_token` (практически невозможна) — повтор с новым токеном внутри SAVEPOINT, до 3 раз. Commit делает вызывающий (#27 — эндпоинт админки). Старый токен перестаёт находиться сразу; сессии, выданные по старому токену, отвергаются по `tia` (ADR-9.2).
 - «Отзыв» в смысле FR-1 и есть перевыпуск: история токенов не хранится, старый токен после UPDATE неизвестен. Временное отключение стола — `is_active = false` (#27/коннектор `PUT /tables` #16).
 - Новые столы (#16, #27) получают токен только из `generate_qr_token`. Детерминированные `dev_token()` сида — только для dev (ADR-9.6).
 - Сравнение токена — поиск по уникальному индексу. Перед запросом в БД токен проверяется `QR_TOKEN_PATTERN`; несоответствие — тот же ответ `qr_invalid` без обращения к БД.
@@ -276,7 +276,7 @@ class GuestContext:
 ## Security
 
 - **Мультиарендность.** `tenant_id` определяется только сервером: при входе — по `qr_token`, далее — из подписанной cookie, и сверяется с БД (`visits.tenant_id = :tid AND id = :vid AND table_id = :tbl`). Все запросы сервисов содержат `tenant_id`. Межарендные ссылки невозможны и на уровне БД (составные FK, DEC-006).
-- **Токены.** 192 бита (`secrets`), проверка формата до БД, одинаковый 404 для всех неуспешных вариантов (ADR-9.6), демо-заведение в prod отвергается. В логи приложения токен не пишется — только `table_id`/`tenant_id` (риск R-2 про access-лог).
+- **Токены.** 192 бита (`secrets`), проверка формата до БД, одинаковый 404 `qr_invalid` для неизвестного, перевыпущенного, неверного по формату и демо-токена в prod; отключённый стол — отдельный 403 `table_inactive` без данных заведения (ADR-9.6), демо-заведение в prod отвергается. В логи приложения токен не пишется — только `table_id`/`tenant_id` (риск R-2 про access-лог).
 - **Cookie.** HMAC-SHA256, `compare_digest`, версия формата; `HttpOnly`, `SameSite=Strict`, `Secure` в prod, `Path=/api/guest/`. Payload не зашифрован — в нём только UUID и язык, секретов нет. Срок проверяется по `iat` на сервере.
 - **CSRF.** `SameSite=Strict`; изменяющие запросы принимают только JSON-тело (Pydantic-модель). Developer добавляет тест: `PUT /session/lang` с `Content-Type: text/plain` / form → 422, а не 200.
 - **Rate-limit.** ADR-9.7; ключ без `:`; fail-open с логом.
@@ -330,3 +330,29 @@ Developer дополнительно:
 - `frontend/src/pages/GuestPage.tsx` — вызов `enterTable` при монтировании; состояния «загрузка», «стол» (название заведения и стола), ошибки `qr_invalid`/`table_inactive`/`rate_limited`/`visit_closed` на выбранном языке; переключатель AZ/RU (`setGuestLang` + `localStorage` с try/catch). Полный интерфейс гостя — #13.
 - `frontend/index.html` — `<meta name="referrer" content="same-origin">`.
 - Тесты: unit `tests/test_guest_tokens.py`, `test_guest_lang.py`, `test_guest_session.py` (подпись, подмена, TTL, версия), `test_guest_api.py` (роутер с подменёнными сервисами, cookie-атрибуты, коды ошибок, 429, fail-open); db `tests/db/test_guest_entry.py` (get-or-open, гонка через две сессии/`asyncio.gather`, закрытие → новый визит, перевыпуск → 404 и 401, `is_active=false` → 403, демо в prod → 404, изоляция арендаторов).
+
+## Реализация (после G4, 2026-11-15)
+
+Коммиты в `feature/9-guest-qr-entry`: 3f26a19 (backend #75–#83), 0501a87 (README, story memory), 614a347 (frontend #84–#86). G3 PASS 2026-11-13, G4 PASS и security review PASS 2026-11-15. Схема БД не менялась, миграций нет. Ниже — отклонения от решений выше и уточнения по Developer Reports (issue #9); при расхождении с ADR действует этот раздел.
+
+**Backend**
+1. **Перевыпуск токена — `token_issued_at = clock_timestamp()`, а не `now()`** (ADR-9.5). `now()` в PostgreSQL — время начала транзакции: перевыпуск в той же транзакции, где стол создан или уже перевыпускался, не изменил бы `token_issued_at`, и сессии со старым `tia` остались бы действительны.
+2. **Get-or-open, шаг 1 — один `UPDATE visits SET last_activity_at = now() … WHERE tenant_id, table_id, status = 'open' RETURNING *`** вместо `SELECT` и отдельного `UPDATE` (ADR-9.3). Шаги 2–3 (`INSERT … ON CONFLICT DO NOTHING`, до `OPEN_VISIT_ATTEMPTS = 3`) — без изменений.
+3. **`no-store` и 503 — класс маршрута `GuestRoute`** (`api/guest.py`, `APIRouter(route_class=GuestRoute)`). `Cache-Control: no-store` ставится на все ответы `/api/guest/v1/*`, включая 401, 422 и 429. `HTTPException` и `RequestValidationError` обрабатываются стандартными обработчиками FastAPI внутри маршрута, поэтому глобальные обработчики исключений на `/api/guest` не действуют. В 503 `{"detail": {"code": "try_again"}}` переводятся `OperationalError`, `InterfaceError`, `TimeoutError` пула, `DBAPIError` с `connection_invalidated` и **`OSError`**: asyncpg при недоступном сервере бросает `ConnectionRefusedError`/`socket.gaierror` без обёртки SQLAlchemy. В лог — `describe_error` с маскированием. Прочие исключения дают стандартный 500. Security INFO: перехват `OSError` широкий — ошибка файла в будущих #10–#12 станет 503, а не 500; по возможности сузить.
+4. **Rate-limit входа — зависимость маршрута `enforce_entry_rate_limit`, она выполняется до валидации тела**: 422 тоже считаются попытками (ADR-9.7 «считаются все попытки»). Тело с синтаксически битым JSON FastAPI отклоняет до зависимостей, такие запросы в лимит не попадают.
+5. **Явные `description` эндпоинтов в OpenAPI.** Docstring обработчиков упоминают `reject_demo` и в схему не попадают (ADR-60.3 — не подсказывать про демо-токены).
+6. **`close_visit(…, staff_id=…)` при `closed_by != staff` — `ValueError`** (ADR-9.3 «Закрытие»): `closed_by_staff_id` задаётся только при закрытии официантом.
+7. Причина отказа входа (`format`/`unknown`/`demo`/`table_inactive`/`not_found`/`token_reissued`) пишется только в INFO-лог, в ответ не попадает. Токен, cookie и `Accept-Language` в логи не пишутся.
+8. `GUEST_SESSION_SECRET` обязателен при `APP_ENV=prod` и при `APP_MODE=scaled`; короче 32 символов (в том числе пустой) — `ConfigError` в любом режиме, значение в текст ошибки не попадает. Секрет нужен и CLI `python -m app.menu_sync` при `APP_ENV=prod` (те же `Settings`). В `deploy/docker-compose.yml` переменная не помечена `${GUEST_SESSION_SECRET:?}` — решение в #30.
+9. Q-4 / E-20 не решался: после повторного включения стола без перевыпуска прежние cookie снова действуют; поведение зафиксировано тестом, решение — #27.
+
+**Frontend**
+1. **Токен из адресной строки не удаляется** (`history.replaceState` не используется): он нужен для тихого повторного входа при `guest_session_required`/`guest_session_invalid` и для перезагрузки страницы. Утечку через Referer закрывает `<meta name="referrer" content="same-origin">` в `frontend/index.html`; утечка в access-лог и историю браузера — риск R-2 (#32).
+2. **Каждая загрузка `/t/{token}` делает `POST /entry`** (идемпотентно, ADR-9.1); `getGuestSession` реализован в `api/client.ts`, но экраном не используется. Security LOW: при общем IP Wi-Fi заведения лимит 30 входов в минуту делится на всех гостей — в #13 сначала пробовать `GET /session` и входить по токену только при 401; лимит по столу — #26/#22 (риск R-3).
+3. **422 на входе без `code`** (токен из URL не прошёл валидацию тела, spec E-4) **показывается как `qr_invalid`** (`guest/errors.ts`, `entryErrorKind`).
+4. **Язык устройства — `localStorage` под ключом `aiw_guest_lang`** (`guest/langStorage.ts`, чтение и запись в try/catch, значение проверяется по списку `az`/`ru`); передаётся в теле `POST /entry` как `lang`, при отсутствии — `null`.
+5. Язык экрана ошибки входа — язык браузера (`navigator.language`, `az`/`ru`, иначе `az`), даже если на устройстве сохранён другой выбор (буквально по spec R-Q2). Экран загрузки — на сохранённом языке; ошибки после входа — на языке сессии. Открытый вопрос для G5.
+6. Структура: экран — `frontend/src/guest/` (`GuestScreen.tsx`, `LanguageSwitcher.tsx`, `i18n.ts`, `langStorage.ts`, `errors.ts`), `pages/GuestPage.tsx` только монтирует `GuestScreen` с `key` по токену (в «Module Structure» экран планировался в `GuestPage.tsx`).
+7. В dev под StrictMode первый `POST /entry` отменяется AbortController-ом и уходит второй; сервер обрабатывает это идемпотентно, в prod-сборке запрос один.
+
+**Тесты.** Backend: `tests/test_guest_api.py`, `test_guest_session.py`, `test_guest_tokens.py`, `test_guest_lang.py`, `test_guest_services.py`, `tests/db/test_guest_entry.py`; полный прогон с PostgreSQL — 2013 passed, 3 skipped (scaled без `REDIS_URL`). Frontend: `src/guest/GuestScreen.test.tsx`, `i18n.test.ts`, `langStorage.test.ts`, `errors.test.ts`, `src/api/client.test.ts`, `src/App.test.tsx` — 137 passed. Ручные проверки G5: азербайджанские тексты — носитель языка (AI-6), вёрстка 360 px.

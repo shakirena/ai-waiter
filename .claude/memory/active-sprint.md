@@ -6,19 +6,21 @@
 
 ## Ready for Dev
 
-- Feature #9 (вход гостя по QR-токену, визит, язык; backend, security, priority:high) — G2 PASS 2026-11-10 (G1 PASS 2026-11-04), kanban:ready-for-dev. Spec: docs/specs/feature-9-guest-qr-entry.md (FR-1…FR-12, NFR-1…NFR-9, AC-1…AC-12, E-1…E-20); arch: docs/arch/feature-9-guest-qr-entry.md (ADR-9.1…9.7, схема БД без изменений). Code stubs: backend/app/guest/*, app/schemas/guest.py, app/api/{errors,guest_auth,guest}.py, config.py (+GUEST_*), .env.example, frontend/src/api/{types,client}.ts. Ветка feature/9-guest-qr-entry, draft PR в main.
-  - Stories (все kanban:ready-for-dev): #75 (вход, M), #76 (присоединение), #77 (единый 404 `qr_invalid`, 403 `table_inactive`, rate-limit входа по IP), #78 (демо в prod), #79 (перевыпуск токена), #80 (сессия-cookie, `current_guest`, M), #81 (закрытый визит → 401 `visit_closed`), #82 (Accept-Language), #83 (смена языка), #84 (экран стола, M), #85 (экран ошибки), #86 (переключатель AZ/RU).
-  - Порядок: #75 → (#76, #77, #80, #82, #84) → (#78, #79, #81, #83, #85) → #86. Для #10–#12 нужны #75 и #80.
-  - Developer: подключить роутер в main.py, `app.state.guest_session_codec`, валидатор `GUEST_SESSION_SECRET` в prod/scaled (обновить тесты prod/scaled Settings), `<meta name="referrer">` в index.html.
-  - Решения пользователя 2026-11-10: Q-2 — экран ошибки по умолчанию на `az`; Q-3 — перевыпуск и отключение стола сразу обрывают сессии (проверка `tia`, `is_active`). Отложено: Q-1 (визит открывает официант — #19/#21), Q-4 (повторное включение стола без перевыпуска — #27).
+*(пусто)*
 
 ## In Development (WIP: 0/5)
 
 *(пусто)*
 
-## In Testing (WIP: 0/5)
+## In Testing (WIP: 1/5)
 
-*(пусто)*
+- Feature #9 (вход гостя по QR-токену, визит, язык; backend, security, priority:high) и stories #75–#86 — kanban:testing, security:passed. G1 PASS 2026-11-04, G2 PASS 2026-11-10, G3 PASS 2026-11-13, G4 PASS и security review PASS 2026-11-15 (CRITICAL/HIGH/MEDIUM 0, LOW 2, INFO 3). Ветка feature/9-guest-qr-entry, коммиты: 3f26a19 (backend #75–#83), 0501a87 (README, story memory), 614a347 (frontend #84–#86). Spec: docs/specs/feature-9-guest-qr-entry.md; arch: docs/arch/feature-9-guest-qr-entry.md (раздел «Реализация (после G4, 2026-11-15)»). G4 Report: https://github.com/shakirena/ai-waiter/issues/9#issuecomment-6890266233.
+  - Код: backend/app/guest/*, app/api/{guest,guest_auth,errors}.py, app/schemas/guest.py, main.py, core/config.py, .env.example, README; frontend/src/guest/*, src/api/{client,types}.ts, src/pages/GuestPage.tsx, index.html. Тесты: backend/tests/test_guest_*.py, tests/db/test_guest_entry.py; frontend/src/guest/*.test.*, src/api/client.test.ts, src/App.test.tsx.
+  - Прогон: backend полный pytest с PostgreSQL — 2013 passed, 3 skipped (scaled без REDIS_URL); frontend — 137 passed (8 файлов); покрытие новых модулей backend 99–100%, frontend строки 100%, ветви 98.4%.
+  - Отклонения от arch (backend): `clock_timestamp()` при перевыпуске токена; get-or-open одним `UPDATE … RETURNING`; класс маршрута `GuestRoute` (`no-store`, 503 `try_again`, в т. ч. на `OSError`); rate-limit входа до валидации тела (422 тоже считаются); явные `description` в OpenAPI; `close_visit` с `staff_id` при `closed_by != staff` — `ValueError`. Frontend: токен из URL не удаляется; каждый заход — `POST /entry`; 422 → `qr_invalid`; `<meta name="referrer" content="same-origin">`; язык устройства — localStorage `aiw_guest_lang`.
+  - Security LOW: токен `/t/{token}` в access-логе и истории браузера (R-2, фильтр — #32); общий лимит входа на IP Wi-Fi заведения (#13 — сначала `GET /session`; лимит по столу — #26/#22). INFO: широкий перехват `OSError` в `GuestRoute`; `GUEST_COOKIE_SECURE=false` допустим в prod без предупреждения; Q-4/E-20 — принятый риск (#27).
+  - Открытые вопросы для /test: язык экрана ошибки входа при сохранённом выборе (сейчас язык браузера, буквально по R-Q2); AZ-тексты — проверка носителем (AI-6); вёрстка 360 px; Q-4 (повторное включение стола без перевыпуска) → #27; `${GUEST_SESSION_SECRET:?}` в deploy/docker-compose.yml → #30; секрет нужен и CLI `python -m app.menu_sync` при APP_ENV=prod.
+  - Doc-sync после G4 выполнен 2026-11-15 (docs/traceability.md, раздел «Реализация» в arch, решение ADR-9.6 в spec).
 
 ## Ready to Deploy (#73)
 

@@ -42,3 +42,13 @@
 - Q-4 / E-20 не решался: повторное включение стола без перевыпуска оживляет прежние cookie (тест фиксирует поведение spec).
 - Тело с битым JSON отклоняется FastAPI до зависимостей — такие попытки в лимит входа не попадают (все синтаксически корректные JSON-запросы считаются).
 - `GUEST_SESSION_SECRET` в `deploy/docker-compose.yml` не помечен `${…:?}`: без него api/worker падают с `ConfigError` (README описывает).
+
+## 🔒 Security Review
+
+**Verdict:** PASS (2026-11-15), метка `security:passed` на #9 и #75–#86.
+**Scope:** backend/app/guest/*, backend/app/api/{errors,guest_auth,guest}.py, backend/app/schemas/guest.py, main.py, core/config.py, .env.example, README.md; frontend/src/guest/*, src/api/{client,types}.ts, src/pages/GuestPage.tsx, index.html.
+**Findings:** CRITICAL 0 · HIGH 0 · MEDIUM 0 · LOW 2 · INFO 3.
+- LOW: токен `/t/{token}` в access-логе и истории браузера (R-2, фильтр — #32).
+- LOW: лимит 30 входов в минуту на IP общий для NAT заведения, а `/entry` вызывается при каждой загрузке страницы (#13: сначала `GET /session`; #26/#22: лимит по столу).
+- INFO: широкий перехват `OSError` → 503 в `GuestRoute`; `GUEST_COOKIE_SECURE=false` допустим в prod; Q-4/E-20 — принятый риск (#27).
+**Заметки:** HMAC и `compare_digest` до разбора JSON; `tid`+`vid`+`tbl` проверяются одним запросом; `tia` обрывает сессии после перевыпуска; демо-заведение в prod отвергается и при входе, и в `current_guest`; XFF принимается только от доверенных прокси.

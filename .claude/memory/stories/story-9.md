@@ -52,3 +52,13 @@
 - LOW: лимит 30 входов в минуту на IP общий для NAT заведения, а `/entry` вызывается при каждой загрузке страницы (#13: сначала `GET /session`; #26/#22: лимит по столу).
 - INFO: широкий перехват `OSError` → 503 в `GuestRoute`; `GUEST_COOKIE_SECURE=false` допустим в prod; Q-4/E-20 — принятый риск (#27).
 **Заметки:** HMAC и `compare_digest` до разбора JSON; `tid`+`vid`+`tbl` проверяются одним запросом; `tia` обрывает сессии после перевыпуска; демо-заведение в prod отвергается и при входе, и в `current_guest`; XFF принимается только от доверенных прокси.
+
+## QA (G5)
+
+**Verdict:** PASS (2026-11-15), коммит 60c0b3e. G5 Report: https://github.com/shakirena/ai-waiter/issues/9#issuecomment-7033891832.
+**TC:** docs/test-cases/feature-9-guest-qr-entry.md — 57 TC (TC-75-001…TC-86-006): авто 54 PASS; ручные 3 не выполнены, переносятся в G6 — TC-75-007 (p95 входа, NFR-6), TC-84-004 (360 px), TC-86-006 (AZ-тексты, AI-6). Раздел #9 в docs/test-cases/traceability-tc.md.
+**Тесты G5:** tests/db/test_guest_entry.py::test_http_spa_page_does_not_open_visit (E-16); GuestScreen.test.tsx — язык экрана ошибки при сохранённом выборе, describe «GuestScreen: смена токена без перемонтирования»; App.test.tsx — `waitFor` (был нестабилен).
+**Прогон:** backend 2014 passed, 3 skipped, покрытие `app` 100% строк и ветвей (CI unit 1696 passed за 23 с, db 318 passed за 53 с); frontend 141 passed, строки 100%, ветви 99,19%.
+**Открытые вопросы:** язык экрана ошибки входа при сохранённом выборе (сейчас язык браузера, R-Q2; TC-85-006); Q-4/E-20 → #27 (TC-80-007 фиксирует текущее поведение).
+**Рекомендации по тестам:** логи NFR-3 через `caplog`; `<meta name="referrer">`; границы `GUEST_SESSION_TTL_HOURS`; FR-12 — `GET /session` не трогает `last_activity_at`; 503 на `PUT /session/lang`.
+**Doc-sync после G5:** 2026-11-20 — docs/traceability.md, абзац G5 в arch «Реализация», active-sprint (Ready to Deploy (#9)).

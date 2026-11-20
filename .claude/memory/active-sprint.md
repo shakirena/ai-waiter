@@ -12,15 +12,23 @@
 
 *(пусто)*
 
-## In Testing (WIP: 1/5)
+## In Testing (WIP: 0/5)
 
-- Feature #9 (вход гостя по QR-токену, визит, язык; backend, security, priority:high) и stories #75–#86 — kanban:testing, security:passed. G1 PASS 2026-11-04, G2 PASS 2026-11-10, G3 PASS 2026-11-13, G4 PASS и security review PASS 2026-11-15 (CRITICAL/HIGH/MEDIUM 0, LOW 2, INFO 3). Ветка feature/9-guest-qr-entry, коммиты: 3f26a19 (backend #75–#83), 0501a87 (README, story memory), 614a347 (frontend #84–#86). Spec: docs/specs/feature-9-guest-qr-entry.md; arch: docs/arch/feature-9-guest-qr-entry.md (раздел «Реализация (после G4, 2026-11-15)»). G4 Report: https://github.com/shakirena/ai-waiter/issues/9#issuecomment-6890266233.
+*(пусто)*
+
+## Ready to Deploy (#9)
+
+- Feature #9 (вход гостя по QR-токену, визит, язык; backend, security, priority:high) и stories #75–#86 — security:passed, G5 PASS 2026-11-15 (G1 PASS 2026-11-04, G2 PASS 2026-11-10, G3 PASS 2026-11-13, G4 PASS и security review PASS 2026-11-15 — LOW 2, INFO 3). Ветка feature/9-guest-qr-entry, коммиты: 3f26a19 (backend #75–#83), 0501a87 (README, story memory), 614a347 (frontend #84–#86), 8074528 (doc-sync после G4), 60c0b3e (G5: тесты и TC). Spec: docs/specs/feature-9-guest-qr-entry.md; arch: docs/arch/feature-9-guest-qr-entry.md (раздел «Реализация (после G4, 2026-11-15)», абзац G5). G4 Report: https://github.com/shakirena/ai-waiter/issues/9#issuecomment-6890266233; G5 Report: https://github.com/shakirena/ai-waiter/issues/9#issuecomment-7033891832.
   - Код: backend/app/guest/*, app/api/{guest,guest_auth,errors}.py, app/schemas/guest.py, main.py, core/config.py, .env.example, README; frontend/src/guest/*, src/api/{client,types}.ts, src/pages/GuestPage.tsx, index.html. Тесты: backend/tests/test_guest_*.py, tests/db/test_guest_entry.py; frontend/src/guest/*.test.*, src/api/client.test.ts, src/App.test.tsx.
-  - Прогон: backend полный pytest с PostgreSQL — 2013 passed, 3 skipped (scaled без REDIS_URL); frontend — 137 passed (8 файлов); покрытие новых модулей backend 99–100%, frontend строки 100%, ветви 98.4%.
-  - Отклонения от arch (backend): `clock_timestamp()` при перевыпуске токена; get-or-open одним `UPDATE … RETURNING`; класс маршрута `GuestRoute` (`no-store`, 503 `try_again`, в т. ч. на `OSError`); rate-limit входа до валидации тела (422 тоже считаются); явные `description` в OpenAPI; `close_visit` с `staff_id` при `closed_by != staff` — `ValueError`. Frontend: токен из URL не удаляется; каждый заход — `POST /entry`; 422 → `qr_invalid`; `<meta name="referrer" content="same-origin">`; язык устройства — localStorage `aiw_guest_lang`.
-  - Security LOW: токен `/t/{token}` в access-логе и истории браузера (R-2, фильтр — #32); общий лимит входа на IP Wi-Fi заведения (#13 — сначала `GET /session`; лимит по столу — #26/#22). INFO: широкий перехват `OSError` в `GuestRoute`; `GUEST_COOKIE_SECURE=false` допустим в prod без предупреждения; Q-4/E-20 — принятый риск (#27).
-  - Открытые вопросы для /test: язык экрана ошибки входа при сохранённом выборе (сейчас язык браузера, буквально по R-Q2); AZ-тексты — проверка носителем (AI-6); вёрстка 360 px; Q-4 (повторное включение стола без перевыпуска) → #27; `${GUEST_SESSION_SECRET:?}` в deploy/docker-compose.yml → #30; секрет нужен и CLI `python -m app.menu_sync` при APP_ENV=prod.
-  - Doc-sync после G4 выполнен 2026-11-15 (docs/traceability.md, раздел «Реализация» в arch, решение ADR-9.6 в spec).
+  - G5 (60c0b3e): tests/db/test_guest_entry.py::test_http_spa_page_does_not_open_visit (E-16); GuestScreen.test.tsx — язык экрана ошибки при сохранённом выборе, describe «GuestScreen: смена токена без перемонтирования»; App.test.tsx — `waitFor` (тест был нестабилен, после исправления 9 прогонов без падений).
+  - TC: docs/test-cases/feature-9-guest-qr-entry.md — 57 TC, авто 54 PASS, ручные 3 не выполнены; docs/test-cases/traceability-tc.md (раздел #9).
+  - Прогон G5: backend 2014 passed, 3 skipped (scaled без REDIS_URL), покрытие `app` 100% строк и ветвей; набор CI unit 1696 passed за 23 с, db 318 passed за 53 с; frontend 141 passed, строки 100%, ветви 99,19%.
+  - Для G6 (ручные TC): TC-75-007 — замер p95 входа ≤ 200 мс (NFR-6); TC-84-004 — вёрстка экрана стола, ошибки и переключателя на 360 px; TC-86-006 — AZ-тексты экрана гостя, носитель языка (AI-6). Также: `GUEST_SESSION_SECRET` на боевом сервере (обязателен в prod и scaled, нужен и CLI `python -m app.menu_sync`); `${GUEST_SESSION_SECRET:?}` в deploy/docker-compose.yml → #30.
+  - Отклонения от arch (backend): `clock_timestamp()` при перевыпуске токена; get-or-open одним `UPDATE … RETURNING`; `GuestRoute` (`no-store`, 503 `try_again`, в т. ч. на `OSError`); rate-limit входа до валидации тела; явные `description` в OpenAPI; `close_visit` с `staff_id` при `closed_by != staff` — `ValueError`. Frontend: токен из URL не удаляется; каждый заход — `POST /entry`; 422 → `qr_invalid`; `<meta name="referrer" content="same-origin">`; язык устройства — localStorage `aiw_guest_lang`.
+  - Security LOW: токен `/t/{token}` в access-логе и истории браузера (R-2, #32); общий лимит входа на IP Wi-Fi заведения (#13 — сначала `GET /session`; лимит по столу — #26/#22). INFO: широкий перехват `OSError` в `GuestRoute`; `GUEST_COOKIE_SECURE=false` допустим в prod без предупреждения; Q-4/E-20 — принятый риск (#27).
+  - Открытые вопросы: язык экрана ошибки входа при сохранённом на устройстве выборе (сейчас язык браузера, буквально по R-Q2; TC-85-006 фиксирует поведение); Q-4/E-20 (повторное включение стола без перевыпуска, TC-80-007) → #27.
+  - Рекомендации QA по тестам (не блокируют): логи NFR-3 проверять через `caplog`; автотест `<meta name="referrer">`; границы `GUEST_SESSION_TTL_HOURS`; FR-12 — `GET /session` не трогает `last_activity_at`; 503 на `PUT /session/lang`.
+  - Doc-sync после G4 выполнен 2026-11-15 (8074528); doc-sync после G5 — 2026-11-20 (docs/traceability.md, абзац G5 в arch, story memory).
 
 ## Ready to Deploy (#73)
 

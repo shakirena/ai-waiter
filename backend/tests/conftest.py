@@ -19,6 +19,9 @@ from tests.doubles import FakeDatabase
 # Фиктивная строка подключения для unit-тестов: домен .invalid не резолвится (RFC 6761),
 # движок ленивый — соединения не возникает (ADR-7.9).
 FAKE_DATABASE_URL = "postgresql+asyncpg://test:test@db.invalid/test"
+# Ключ подписи гостевых сессий для тестов (#9): обязателен при prod/scaled (ADR-9.2). Тест, которому
+# нужен «секрет не задан», передаёт guest_session_secret=None явно.
+TEST_GUEST_SESSION_SECRET = "test-guest-session-secret-0123456789abcdef"
 
 
 def make_settings(**overrides: object) -> Settings:
@@ -28,6 +31,7 @@ def make_settings(**overrides: object) -> Settings:
         "database_url": FAKE_DATABASE_URL,
         "serve_frontend": False,
         "log_format": "console",
+        "guest_session_secret": TEST_GUEST_SESSION_SECRET,
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)  # type: ignore[arg-type]

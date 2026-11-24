@@ -100,6 +100,18 @@ def test_menu_sync_does_not_import_fastapi_or_api() -> None:
     assert offenders == []
 
 
+def test_guest_services_do_not_import_http_layer() -> None:
+    """#9: сервисы гостя без FastAPI/Starlette и ``app.api`` — HTTP-коды и cookie только в ``app/api``."""
+    files = list((APP_DIR / "guest").rglob("*.py"))
+    assert {path.name for path in files} >= {"entry.py", "session.py", "visits.py"}
+    offenders = [
+        path.relative_to(APP_DIR).as_posix()
+        for path in files
+        if _imports_any(path, ("fastapi", "starlette", "app.api"))
+    ]
+    assert offenders == []
+
+
 def test_core_does_not_import_menu_sync() -> None:
     offenders = [
         path.relative_to(APP_DIR).as_posix()

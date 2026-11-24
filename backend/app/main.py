@@ -15,12 +15,13 @@ from typing import Any
 from fastapi import FastAPI
 
 from app import __version__
-from app.api import health
+from app.api import guest, health
 from app.api.demo_data import DemoDataMonitor
 from app.core.config import AppEnv, Settings, get_settings
 from app.core.container import build_container, start_container, stop_container
 from app.core.log import configure_logging
 from app.core.scheduler import TaskRegistry
+from app.guest.session import build_guest_session_codec
 from app.web.spa import mount_spa
 
 logger = logging.getLogger(__name__)
@@ -32,8 +33,9 @@ def create_app(settings: Settings | None = None, *, registry: TaskRegistry | Non
     1. ``settings = settings or get_settings()``; ``configure_logging(settings)``.
     2. ``FastAPI(title="AI Waiter", version=__version__, lifespan=...)``; ``docs_url``/``redoc_url``/
        ``openapi_url`` = None, если ``not settings.is_docs_enabled``.
-    3. ``app.state.demo_data_monitor = DemoDataMonitor(READINESS_CHECK_TIMEOUT)`` (#71, ADR-60.2).
-    4. Роутеры: ``health.router``; далее ``/api`` и ``/integration/v1`` (следующие stories).
+    3. ``app.state.demo_data_monitor = DemoDataMonitor(READINESS_CHECK_TIMEOUT)`` (#71, ADR-60.2);
+       ``app.state.guest_session_codec`` — кодек cookie гостя (#9, ADR-9.2; от режима не зависит).
+    4. Роутеры: ``health.router``, ``guest.router`` (``/api/guest/v1``, #9); далее ``/integration/v1``.
     5. Если ``settings.serve_frontend`` — ``mount_spa(app, settings.frontend_dist_path)`` ПОСЛЕДНИМ.
     6. ``registry`` по умолчанию — ``app.tasks.registry``.
     """
@@ -58,8 +60,14 @@ def create_app(settings: Settings | None = None, *, registry: TaskRegistry | Non
     app.state.settings = settings
     app.state.task_registry = registry
     app.state.demo_data_monitor = DemoDataMonitor(health.READINESS_CHECK_TIMEOUT)
+    guest_secret = settings.guest_session_secret
+    app.state.guest_session_codec = build_guest_session_codec(
+        guest_secret.get_secret_value() if guest_secret is not None else None,
+        ttl_hours=settings.guest_session_ttl_hours,
+    )
 
     app.include_router(health.router)
+    app.include_router(guest.router)
 
     if settings.serve_frontend:
         mount_spa(app, settings.frontend_dist_path)

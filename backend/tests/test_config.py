@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.config import AppEnv, AppMode, ConfigError, Settings, get_settings
-from tests.conftest import FAKE_DATABASE_URL, make_settings
+from tests.conftest import FAKE_DATABASE_URL, TEST_GUEST_SESSION_SECRET, make_settings
 
 
 def test_defaults_single_mode_on_loopback() -> None:
@@ -126,6 +126,7 @@ def test_public_base_url_accepts_domain() -> None:
 def test_get_settings_reads_environment(clean_env: pytest.MonkeyPatch) -> None:
     clean_env.setenv("APP_MODE", "scaled")
     clean_env.setenv("REDIS_URL", "redis://redis:6379/0")
+    clean_env.setenv("GUEST_SESSION_SECRET", TEST_GUEST_SESSION_SECRET)
     clean_env.setenv("DOCS_ENABLED", "")  # пустое значение — как не заданное
     s = get_settings()
     assert s.app_mode is AppMode.SCALED
@@ -233,3 +234,70 @@ def test_pool_settings_read_from_environment(clean_env: pytest.MonkeyPatch) -> N
 def test_test_database_url_is_not_a_setting() -> None:
     """ADR-7.11: TEST_DATABASE_URL читают только тесты, приложение его не видит."""
     assert "test_database_url" not in Settings.model_fields
+
+
+# ---------------------------------------------------------------- #9: GUEST_SESSION_SECRET (ADR-9.2)
+
+PROD_REQUIRED: dict[str, object] = {"app_env": AppEnv.PROD, "public_base_url": "https://menu.example.com"}
+SCALED_REQUIRED: dict[str, object] = {"app_mode": "scaled", "redis_url": "redis://redis:6379/0"}
+
+
+@pytest.mark.parametrize("overrides", [PROD_REQUIRED, SCALED_REQUIRED], ids=["prod", "scaled"])
+def test_guest_session_secret_required_in_prod_and_scaled(overrides: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="GUEST_SESSION_SECRET обязателен при APP_ENV=prod и при APP_MODE=scaled"):
+        make_settings(guest_session_secret=None, **overrides)
+
+
+@pytest.mark.parametrize("app_env", [AppEnv.DEV, AppEnv.TEST])
+def test_guest_session_secret_optional_in_single_outside_prod(app_env: AppEnv) -> None:
+    assert make_settings(guest_session_secret=None, app_env=app_env).guest_session_secret is None
+
+
+@pytest.mark.parametrize("overrides", [{}, PROD_REQUIRED, SCALED_REQUIRED], ids=["single", "prod", "scaled"])
+def test_guest_session_secret_too_short_without_value_in_text(overrides: dict[str, object]) -> None:
+    short = "short-secret-value-31-character"
+    assert len(short) == 31
+    with pytest.raises(ValidationError, match="не короче 32 символов") as info:
+        make_settings(guest_session_secret=short, **overrides)
+    assert short not in str(info.value)
+
+
+def test_guest_session_secret_of_min_length_is_accepted() -> None:
+    settings = make_settings(guest_session_secret="x" * 32, **PROD_REQUIRED)
+    assert settings.guest_session_secret is not None
+    assert "x" * 32 not in repr(settings)
+
+
+def test_missing_guest_secret_reported_by_get_settings(clean_env: pytest.MonkeyPatch) -> None:
+    clean_env.setenv("APP_ENV", "prod")
+    clean_env.setenv("PUBLIC_BASE_URL", "https://menu.example.com")
+    with pytest.raises(ConfigError, match="GUEST_SESSION_SECRET обязателен"):
+        get_settings()
+
+
+def test_guest_secret_from_environment(clean_env: pytest.MonkeyPatch) -> None:
+    clean_env.setenv("APP_ENV", "prod")
+    clean_env.setenv("PUBLIC_BASE_URL", "https://menu.example.com")
+    clean_env.setenv("GUEST_SESSION_SECRET", TEST_GUEST_SESSION_SECRET)
+    secret = get_settings().guest_session_secret
+    assert secret is not None and secret.get_secret_value() == TEST_GUEST_SESSION_SECRET
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({}, False),
+        (PROD_REQUIRED, True),
+        ({**PROD_REQUIRED, "guest_cookie_secure": False}, False),
+        ({"guest_cookie_secure": True}, True),
+    ],
+)
+def test_guest_cookie_secure_effective(overrides: dict[str, object], expected: bool) -> None:
+    assert make_settings(**overrides).guest_cookie_secure_effective is expected
+
+
+def test_guest_defaults() -> None:
+    settings = make_settings()
+    assert settings.guest_session_ttl_hours == 12
+    assert settings.guest_entry_rate_limit == 30
+    assert settings.guest_cookie_secure is None

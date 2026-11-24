@@ -110,3 +110,17 @@
 **Reason:** docs/arch/feature-60-demo-data-guard.md ADR-60.1–60.3; arch #6 «недоступная зависимость не роняет процесс»; в `single` readiness никто не опрашивает, в `scaled` compose/Caddy смотрят на `/health`.
 **Applies to:** #60, #71; story гостевого входа по QR (рекомендация: отклонять `DEMO_TENANT_ID` при `APP_ENV=prod`); #30/G6 (чек-лист `APP_ENV=prod`); любые будущие проверки политик в `/health/ready`.
 **Revisit when:** пользователь выберет отдельный ключ в `checks` (открытый вопрос 1 arch #60), появится оркестратор, снимающий трафик по readiness, или флаг `--force` для сида.
+
+## DEC-015: Формат ошибок `/api/*` — `{"detail": {"code": "<snake_case>"}}`
+
+**Decision:** Ошибки API (гостевой API #9 и далее `/api/*`) возвращают тело `{"detail": {"code": "<snake_case>"}}` — совместимо с форматом FastAPI `{"detail": …}`; помощник `app/api/errors.py: api_error(status, code, headers=None)`, коды — `ErrorCode`. Текст ошибки не передаётся: frontend локализует по `code` (язык гостя при ошибке входа может быть неизвестен). 422 валидации тела остаётся стандартным `{"detail": [...]}`. В теле нет названий заведения, стола, токена и причины, кроме самого кода.
+**Reason:** docs/arch/feature-9-guest-qr-entry.md ADR-9.6; ТЗ NFR-4 (без утечки данных других заведений).
+**Applies to:** #9 (#75–#86), #10–#12, панель персонала #19+, админка #27+.
+**Revisit when:** понадобятся параметры в ошибке (например, `retry_after` в теле) или единый формат с `/integration/v1`.
+
+## DEC-016: Гостевая сессия — подписанная cookie `aiw_guest`, проверка по БД на каждом запросе
+
+**Decision:** Гость определяется только подписанной HMAC-SHA256 cookie `aiw_guest` (`v1.<payload>.<sig>`, payload `vid, tid, tbl, tia, lang, iat`; `HttpOnly`, `SameSite=Strict`, `Path=/api/guest/`, `Secure` в prod, TTL `GUEST_SESSION_TTL_HOURS`), без таблицы сессий. Зависимость `current_guest` (`app/api/guest_auth.py`) на каждом запросе одним SELECT по `tid`/`vid`/`tbl` проверяет: визит открыт (`visit_closed`), стол активен и `tables.token_issued_at = tia` (иначе `guest_session_invalid` — перевыпуск токена и отключение стола обрывают сессии сразу, решение пользователя 2026-11-10), демо в prod. Секрет `GUEST_SESSION_SECRET` обязателен в prod и `scaled`. Гостевые API #10–#12 берут `tenant_id`, стол и визит только из `GuestContext`. Язык устройства — в cookie, `visits.lang` — последний выбор за столом.
+**Reason:** docs/arch/feature-9-guest-qr-entry.md ADR-9.2, ADR-9.4; ТЗ NFR-4, NFR-5; CLAUDE.md «Мультиарендность».
+**Applies to:** #9 (#75, #80–#83), #10, #11, #12, #13, #23, #26, #27.
+**Revisit when:** понадобится отзыв отдельного устройства, учёт устройств за столом или ротация секрета без разлогинивания.

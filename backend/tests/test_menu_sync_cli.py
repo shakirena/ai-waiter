@@ -26,6 +26,7 @@ import app.menu_sync.__main__ as cli
 from app.menu_sync.report import EntityCounts, IssueCode, MenuSyncReport, PriceCounts, Severity, SyncIssue
 from app.menu_sync.service import MenuSyncBusyError, TenantNotFoundError
 from app.models.enums import MenuSyncSource, MenuSyncStatus
+from tests.conftest import TEST_GUEST_SESSION_SECRET
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 VALID_CSV = BACKEND_DIR / "tests" / "fixtures" / "menu" / "menu_valid.csv"
@@ -618,6 +619,7 @@ def test_import_is_allowed_in_prod(
 ) -> None:
     monkeypatch.setenv("APP_ENV", "prod")
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://menu.example.com")
+    monkeypatch.setenv("GUEST_SESSION_SECRET", TEST_GUEST_SESSION_SECRET)  # обязателен в prod (#9)
     fake_service(applied_report())
     code, _, _ = run(capsys, "import", VALID_CSV, "--tenant", TENANT)
     assert code == cli.EXIT_OK

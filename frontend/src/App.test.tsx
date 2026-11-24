@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
 
@@ -12,10 +12,34 @@ function renderAt(path: string) {
   );
 }
 
+// Страница гостя при монтировании входит по токену (POST /api/guest/v1/entry): сеть не нужна,
+// fetch подменяется запросом, который не завершается, — проверяется только маршрут.
+const fetchMock = vi.fn<typeof fetch>(() => new Promise<Response>(() => {}));
+
+beforeEach(() => {
+  vi.stubGlobal("fetch", fetchMock);
+});
+
+afterEach(() => {
+  fetchMock.mockClear();
+  vi.unstubAllGlobals();
+});
+
 describe("Маршруты приложения", () => {
+  it.each(["/t/demo", "/t/demo/menu"])("%s лениво загружает экран гостя и входит по токену", async (path) => {
+    renderAt(path);
+    expect(await screen.findByTestId("guest-page")).toBeInTheDocument();
+    expect(screen.getByTestId("guest-loading")).toBeInTheDocument();
+    // Вход выполняется в passive effect после коммита lazy-компонента: findByTestId может найти
+    // страницу раньше, чем эффект вызовет fetch, поэтому вызов ждём через waitFor.
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("/api/guest/v1/entry", expect.objectContaining({ method: "POST" })),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetchMock.mock.calls[0]![1]!.body as string)).toMatchObject({ token: "demo" });
+  });
+
   it.each([
-    ["/t/demo", "guest-page", "Гость"],
-    ["/t/demo/menu", "guest-page", "Гость"],
     ["/staff", "staff-page", "Официант"],
     ["/staff/orders", "staff-page", "Официант"],
     ["/admin", "admin-page", "Админка"],
@@ -27,11 +51,6 @@ describe("Маршруты приложения", () => {
     expect(page).toBeInTheDocument();
     expect(screen.getByTestId(`${testId}-title`)).toHaveTextContent(title);
     expect(screen.queryByTestId("page-loading")).not.toBeInTheDocument();
-  });
-
-  it("страница гостя показывает токен стола из адреса", async () => {
-    renderAt("/t/abc123");
-    expect(await screen.findByTestId("guest-table-token")).toHaveTextContent("abc123");
   });
 
   it.each(["/", "/unknown", "/t", "/staffroom"])("%s показывает «Страница не найдена»", (path) => {
